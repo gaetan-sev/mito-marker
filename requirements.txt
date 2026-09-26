@@ -1,0 +1,22 @@
+anndata>=0.10
+numpy>=1.26
+pandas>=2.1
+matplotlib>=3.8
+seaborn>=0.13
+scikit-learn>=1.4
+umap-learn>=0.5
+shap>=0.44
+flowio>=1.2
+gdown>=5.1
+scipy>=1.12
+ipywidgets>=8.0
+plotly>=5.0
+xgboost>=2.0
+joblib>=1.4
+pypdf>=4.0
+diptest>=0.6
+scikit-posthocs>=0.9
+pytest>=8.0
+ruff>=0.4
+# MIL strategy — optional, pre-installed on Google Colab
+torch>=2.0
