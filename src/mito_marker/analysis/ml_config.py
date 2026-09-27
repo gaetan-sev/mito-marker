@@ -586,7 +586,7 @@ def configure_ml(anndata_object: anndata.AnnData) -> dict:
             print(f" — post-bag FS: {bag_feature_selection_methods}", end="")
     print()
     if strategy == "MIL":
-        print(f"   model_name           : MIL (internal ABMIL — encoder_dim=32, attention_dim=16)")
+        print("   model_name           : MIL (internal ABMIL — encoder_dim=32, attention_dim=16)")
         print(f"   mil_max_epochs       : {mil_max_epochs}")
         print(f"   mil_patience         : {mil_patience}")
     else:

@@ -89,7 +89,7 @@ import umap as UmapLib
 from sklearn.decomposition import PCA as SklearnPCA
 from sklearn.preprocessing import StandardScaler
 
-from mito_marker.analysis.colors import get_color_for_value, sort_values_for_legend
+from mito_marker.analysis.colors import sort_values_for_legend
 from mito_marker.analysis.pca_plot import (
     _build_color_map,
     _get_group_labels,
@@ -1568,9 +1568,6 @@ def plot_amhi_profile(
         axes.axhline(y_med, color="lightgray", linewidth=1.0, linestyle="--", zorder=0)
 
     # Draw one scatter per (color_group × condition) combination.
-    plotted_color_labels: set = set()
-    plotted_condition_labels: set = set()
-
     for _, row in summary_dataframe.iterrows():
         color_group = row["_color_group"]
         condition = row["_condition"]
@@ -1580,12 +1577,6 @@ def plot_amhi_profile(
         marker = _MARKERS.get(str(condition), "o")
         x_val = float(row[x_metric])
         y_val = float(row[y_metric])
-
-        # Build legend label flags.
-        color_legend_label = str(color_group) if str(color_group) not in plotted_color_labels else None
-        condition_legend_label = str(condition) if str(condition) not in plotted_condition_labels else None
-        plotted_color_labels.add(str(color_group))
-        plotted_condition_labels.add(str(condition))
 
         axes.scatter(
             x_val,
@@ -1852,21 +1843,25 @@ def plot_amhi_bar(
         if metric == "AMHI_D_median":
             cache_key = _AMHI_RESULTS_KEY
             col_map = _AMHI_D_COLS
-            compute_fn = lambda: compute_amhi(
-                anndata_object,
-                group_by=group_column,
-                obs_filter=obs_filter,
-                reference_label=reference_label,
-            )
+
+            def compute_fn() -> pd.DataFrame:
+                return compute_amhi(
+                    anndata_object,
+                    group_by=group_column,
+                    obs_filter=obs_filter,
+                    reference_label=reference_label,
+                )
         else:
             cache_key = _AMHI_MHID_RESULTS_KEY
             col_map = _MHID_COLS
-            compute_fn = lambda: compute_mhi_d_absolute(
-                anndata_object,
-                group_by=group_column,
-                obs_filter=obs_filter,
-                reference_label=reference_label,
-            )
+
+            def compute_fn() -> pd.DataFrame:
+                return compute_mhi_d_absolute(
+                    anndata_object,
+                    group_by=group_column,
+                    obs_filter=obs_filter,
+                    reference_label=reference_label,
+                )
 
         if (
             cache_key in anndata_object.uns

@@ -77,8 +77,8 @@ from sklearn.svm import SVC, SVR
 from mito_marker.analysis._gpu_utils import is_cuml_available
 from mito_marker.analysis.feature_selection import (
     _get_active_data_matrix,
-    _score_corr_filter,
     _score_cmi,
+    _score_corr_filter,
     _score_high_variance,
     _score_mim,
     _score_pca_loadings,
@@ -390,8 +390,9 @@ def run_ml_analysis(
                 "MIL strategy requires PyTorch. Install it with: pip install torch>=2.0"
             ) from mil_import_error
 
-        from mito_marker.analysis.ml_mil import run_mil_logo_cv
         from sklearn.preprocessing import LabelEncoder as _LabelEncoder
+
+        from mito_marker.analysis.ml_mil import run_mil_logo_cv
 
         print()
         print("  Training model: AttentionMILModel (ABMIL) — LOGO …")

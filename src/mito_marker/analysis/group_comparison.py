@@ -51,7 +51,6 @@ import scipy.stats
 
 from mito_marker.analysis.colors import sort_values_for_legend
 
-
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
@@ -291,10 +290,10 @@ def compare_groups(
     print(f"  Observations used: {n_valid_obs}")
     print(f"  Statistical test: {test_name}")
     print(f"  Effect size metric: {effect_metric}")
-    print(f"  Multiple-testing correction: Benjamini-Hochberg FDR")
+    print("  Multiple-testing correction: Benjamini-Hochberg FDR")
     print(f"  Significance threshold (alpha): {alpha}")
     print(f"  Channels tested: {n_channels} ({channel_description})")
-    print(f"  Data used: .X (raw — rank tests are invariant to monotonic transforms)")
+    print("  Data used: .X (raw — rank tests are invariant to monotonic transforms)")
     print(f"{'=' * 60}")
 
     # ------------------------------------------------------------------
@@ -392,7 +391,7 @@ def compare_groups(
     n_significant = int(result_dataframe["significant"].sum())
     proportion_significant = n_significant / n_channels if n_channels > 0 else 0.0
 
-    print(f"\nResults (sorted by adjusted p-value):")
+    print("\nResults (sorted by adjusted p-value):")
     print(
         f"  Significant channels (p_adj < {alpha}): "
         f"{n_significant} / {n_channels} "

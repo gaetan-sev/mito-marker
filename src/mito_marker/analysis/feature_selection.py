@@ -272,7 +272,7 @@ def select_channels(anndata_object: anndata.AnnData) -> anndata.AnnData:
             all_scores = _score_shap_importance(anndata_object)
             if all_scores is None:
                 print(
-                    f"  WARNING: SHAPImportance skipped — no SHAP values found. "
+                    "  WARNING: SHAPImportance skipped — no SHAP values found. "
                     "Run run_ml_analysis() first."
                 )
                 continue
@@ -313,7 +313,6 @@ def select_channels(anndata_object: anndata.AnnData) -> anndata.AnnData:
     # Combine all selections into a single active_selection mask.
     _ensure_analysis_config(anndata_object)
 
-    ranking_methods = [m for m in ordered_methods if m != _METHOD_CORR_FILTER]
     all_applied = [m for m in ordered_methods
                    if f"is_selected_{m}" in anndata_object.var.columns]
 
@@ -447,7 +446,7 @@ def _prompt_feature_selection_options(
 
     while True:
         raw_response = input(
-            f"Select methods (e.g. 2 or 1,2 or 2,3,4), or press Enter to skip: "
+            "Select methods (e.g. 2 or 1,2 or 2,3,4), or press Enter to skip: "
         ).strip()
 
         if raw_response == "":
@@ -510,7 +509,7 @@ def _prompt_corr_filter_threshold() -> float:
                 value = value / 100.0
             if 0.0 < value <= 1.0:
                 return value
-            print(f"  Threshold must be between 1 and 100 (or 0.01 and 1.0).")
+            print("  Threshold must be between 1 and 100 (or 0.01 and 1.0).")
         except ValueError:
             print(f"  Invalid value '{raw_response}'. Enter a number like 95 or 0.95.")
 

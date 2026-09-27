@@ -31,11 +31,9 @@ from mito_marker.analysis.preprocessing_config import _validate_preprocessing_co
 from mito_marker.analysis.selection import (
     _ANALYSIS_CONFIG_KEY,
     _filter_obs_by_values,
-    _get_subject_column,
     _subsample_obs_per_subject,
 )
 from mito_marker.controlled_vocabulary import FILTERABLE_OBS_COLUMNS
-
 
 # ---------------------------------------------------------------------------
 # Internal: dataset summary printer

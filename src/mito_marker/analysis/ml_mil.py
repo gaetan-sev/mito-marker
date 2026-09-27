@@ -55,7 +55,7 @@ Typical usage:
 
 import copy
 import warnings
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import anndata
 import numpy as np
@@ -63,6 +63,9 @@ import pandas as pd
 from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
 from sklearn.preprocessing import LabelEncoder
 
+if TYPE_CHECKING:
+    # Annotations only: torch stays an optional runtime dependency.
+    import torch
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -635,9 +638,13 @@ def run_mil_logo_cv(
     overall_rmse: Optional[float] = None
     if task_type == "regression" and len(oof_true_floats) > 0:
         from sklearn.metrics import (
-            r2_score as _r2_score,
             mean_absolute_error as _mae_score,
+        )
+        from sklearn.metrics import (
             mean_squared_error as _mse_score,
+        )
+        from sklearn.metrics import (
+            r2_score as _r2_score,
         )
         overall_r2 = float(_r2_score(oof_true_floats, oof_pred_floats))
         overall_mae = float(_mae_score(oof_true_floats, oof_pred_floats))

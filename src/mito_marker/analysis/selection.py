@@ -421,7 +421,7 @@ def _prompt_subsampling_size(
     else:
         print(f"  (no subject column — total: {len(obs_dataframe):,} events)")
 
-    print(f"  Default (press Enter): skip sub-sampling — keep all events.")
+    print("  Default (press Enter): skip sub-sampling — keep all events.")
     print()
 
     while True:
@@ -442,7 +442,7 @@ def _prompt_subsampling_size(
             continue
 
         if n_events < 0:
-            print(f"  Value must be 0 or greater. Enter 0 or press Enter to skip.")
+            print("  Value must be 0 or greater. Enter 0 or press Enter to skip.")
             continue
 
         return n_events

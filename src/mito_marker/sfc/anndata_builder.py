@@ -17,20 +17,19 @@ import anndata
 import numpy as np
 import pandas as pd
 
+from mito_marker.controlled_vocabulary import (
+    ALLOWED_DIET_SFC,
+    ALLOWED_DILUTION_SFC,
+    ALLOWED_SPECIES_SFC,
+    SFC_NON_ANALYTICAL_CHANNELS,
+)
+
 # Sentinel value for missing optional plain-string fields in .obs.
 # Empty string "" is used because AnnData's h5py writer requires uniform string
 # object arrays. np.nan (float) and all-None arrays both fail h5py's string encoder.
 # An all-"" array is a valid uniform string array that h5py can encode correctly.
 # Use pd.isna(value) or `value == ""` to test for absence downstream.
 _MISSING_STRING_VALUE = ""
-
-from mito_marker.controlled_vocabulary import (
-    ALLOWED_DIET_SFC,
-    ALLOWED_DILUTION_SFC,
-    ALLOWED_MARKERS_SFC,
-    ALLOWED_SPECIES_SFC,
-    SFC_NON_ANALYTICAL_CHANNELS,
-)
 
 
 def build_sfc_anndata(

@@ -41,13 +41,14 @@ import pandas as pd
 from matplotlib.patches import Ellipse, Polygon
 from scipy.spatial import ConvexHull, QhullError
 from scipy.stats import chi2
+
+from mito_marker.analysis._fingerprint import compute_fingerprint
+from mito_marker.analysis._gpu_utils import is_cuml_available
 from mito_marker.analysis._plot_context import (
     get_run_context_console_text,
     get_run_context_footer_text,
     get_species_label,
 )
-from mito_marker.analysis._fingerprint import compute_fingerprint
-from mito_marker.analysis._gpu_utils import is_cuml_available
 from mito_marker.analysis.colors import (
     COLOR_PALETTE_KEY,
     _generate_auto_colors,
@@ -372,7 +373,7 @@ def compute_pca(
             f"{total_var:.1%} variance explained, weight_by={cached_weight_by}) "
             "— skipping recomputation."
         )
-        print(f"=> Pass force_recompute=True to recompute.")
+        print("=> Pass force_recompute=True to recompute.")
         return anndata_object
 
     print("=" * 60)

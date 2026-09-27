@@ -44,12 +44,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from mito_marker.analysis.colors import sort_values_for_legend
 from mito_marker.analysis._plot_context import (
     get_run_context_console_text,
     get_run_context_footer_text,
     get_species_label,
 )
+from mito_marker.analysis.colors import sort_values_for_legend
 from mito_marker.controlled_vocabulary import PREFERRED_CONDITION_COLORS
 
 _ANALYSIS_CONFIG_KEY = "analysis_config"

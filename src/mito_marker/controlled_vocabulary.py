@@ -653,7 +653,7 @@ SFC_NON_ANALYTICAL_CHANNELS: list[str] = [
     "FlowAI",
 ]
 
-# Channels to EXCLUDE 
+# Channels to EXCLUDE
 # Never used in analysis and must be dropped from .X.
 # — FlowJo spectral compensation outputs (FJComp-* prefix).
 # These are redundant duplicates of the raw channels with compensation applied by FlowJo.
@@ -797,11 +797,11 @@ PREFERRED_CONDITION_COLORS: dict[str, str] = {
 
     # JPP Palette :
     "Worm":   "#C1699B",  #
-    "Droso":  "#58ACE0",  # 
-    "ZFish":  "#009E73",  # 
-    "KFish":  "#E69F00",  # 
-    "Mouse":  "#0072B2",  # 
-    "Human":  "#F0E442",  # 
+    "Droso":  "#58ACE0",  #
+    "ZFish":  "#009E73",  #
+    "KFish":  "#E69F00",  #
+    "Mouse":  "#0072B2",  #
+    "Human":  "#F0E442",  #
 
 
     # --- Experimental condition colors ---

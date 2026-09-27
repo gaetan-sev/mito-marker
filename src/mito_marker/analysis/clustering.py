@@ -523,7 +523,7 @@ def compare_bag_sizes(
             if not np.isnan(metrics["silhouette_score"])
             else "N/A (< 2 clusters)"
         )
-        print(f"  Metrics:")
+        print("  Metrics:")
         print(f"    n_clusters      = {metrics['n_clusters']}")
         print(f"    noise_ratio     = {metrics['noise_ratio']:.1%}")
         print(f"    silhouette      = {silhouette_display}")

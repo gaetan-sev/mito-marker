@@ -55,43 +55,23 @@ Pipeline order:
        compute_cluster_proportions() / plot_cluster_proportions() / compare_cluster_proportions()
 """
 
-from mito_marker.analysis.colors import (
-    assign_color_palette,
-    get_color_for_value,
-    get_subject_colors,
-    sort_values_for_legend,
+from mito_marker.analysis.age_plot import plot_feature_vs_age
+from mito_marker.analysis.amhi import (
+    compute_all_mito_mean,
+    compute_amhi,
+    compute_mhi_d_absolute,
+    plot_amhi_2d,
+    plot_amhi_bar,
+    plot_amhi_distances,
+    plot_amhi_profile,
+    plot_amhi_species_comparison,
+    plot_amhi_umap,
+    summarize_amhi,
 )
-from mito_marker.analysis.feature_selection import get_selected_data_matrix, select_channels
-from mito_marker.analysis.normalization import transform_and_normalize
-from mito_marker.analysis.pca_plot import (
-    compute_pca,
-    get_top_loading_channels,
-    plot_pca_3d_biplot,
-    plot_pca_3d_scatter,
-    plot_pca_3d_trajectory,
-    plot_pca_biplot,
-    plot_pca_loadings_bar,
-    plot_pca_scatter,
-    plot_pca_trajectory,
-)
-from mito_marker.analysis.distribution_plots import plot_density, plot_histogram, plot_violin
-from mito_marker.analysis.radar_plot import plot_radar
-from mito_marker.analysis.time_curve import plot_time_curve
 from mito_marker.analysis.channel_aggregation import aggregate_sfc_channels_by_color
 from mito_marker.analysis.channel_intensity_plot import (
     plot_channel_intensity_bar,
     plot_channel_intensity_line,
-)
-from mito_marker.analysis.report import ReportBuilder
-from mito_marker.analysis.selection import select_sfc_subset
-from mito_marker.analysis.stratification import bin_obs_column, map_obs_values, split_obs_by_threshold
-from mito_marker.analysis.group_comparison import compare_groups
-from mito_marker.analysis.age_plot import plot_feature_vs_age
-from mito_marker.analysis.umap_plot import compute_umap, plot_umap
-from mito_marker.analysis.feature_subset import (
-    get_subset_history,
-    subset_by_feature_values,
-    subset_by_obs_values,
 )
 from mito_marker.analysis.cluster_model import (
     MitoClusterModel,
@@ -110,18 +90,6 @@ from mito_marker.analysis.cluster_plots import (
     plot_cluster_proportions,
     plot_cluster_radar,
 )
-from mito_marker.analysis.preprocessing_config import (
-    configure_preprocessing,
-    get_default_preprocessing_config,
-    ALLOWED_TRANSFORMS,
-    ALLOWED_NORMALIZATIONS,
-    ALLOWED_FEATURE_SELECTION_METHODS,
-)
-from mito_marker.analysis.preprocessing_pipeline import run_preprocessing
-from mito_marker.analysis.ml_config import configure_ml, get_default_ml_config, DEFAULT_MODEL_PARAMS
-from mito_marker.analysis.ml_pipeline import run_feature_subset_challenge, run_ml_analysis, get_sfc_feature_subsets, plot_feature_vs_target
-from mito_marker.analysis.permutation_test import run_permutation_test
-from mito_marker.analysis.ml_mil import plot_mil_attention, get_mil_attention_dataframe
 from mito_marker.analysis.clustering import (
     compare_bag_sizes,
     compute_umap_on_bags,
@@ -130,34 +98,21 @@ from mito_marker.analysis.clustering import (
     profile_clusters,
     run_hdbscan,
 )
-from mito_marker.analysis.shap_clustering import (
-    cluster_shap_values,
-    plot_shap_cluster_heatmap,
-)
 from mito_marker.analysis.clustermap_plot import plot_feature_clustermap
-from mito_marker.analysis.phylogeny import (
-    assert_ultrametric_divergence_times,
-    build_species_phylogeny_linkage,
-    get_linkage_clades,
-    linkage_to_newick_string,
+from mito_marker.analysis.colors import (
+    assign_color_palette,
+    get_color_for_value,
+    get_subject_colors,
+    sort_values_for_legend,
 )
-from mito_marker.analysis.phylo_tanglegram import (
-    compute_clade_support,
-    compute_tanglegram_sensitivity,
-    plot_phylo_tanglegram,
+from mito_marker.analysis.distribution_plots import plot_density, plot_histogram, plot_violin
+from mito_marker.analysis.feature_selection import get_selected_data_matrix, select_channels
+from mito_marker.analysis.feature_subset import (
+    get_subset_history,
+    subset_by_feature_values,
+    subset_by_obs_values,
 )
-from mito_marker.analysis.amhi import (
-    compute_all_mito_mean,
-    compute_amhi,
-    compute_mhi_d_absolute,
-    plot_amhi_distances,
-    plot_amhi_2d,
-    plot_amhi_umap,
-    summarize_amhi,
-    plot_amhi_profile,
-    plot_amhi_bar,
-    plot_amhi_species_comparison,
-)
+from mito_marker.analysis.group_comparison import compare_groups
 from mito_marker.analysis.mhi import (
     analyze_mhi_sensitivity,
     compute_all_mhi,
@@ -177,6 +132,60 @@ from mito_marker.analysis.mhi import (
     validate_all_chimera_pairs,
     validate_mhi_with_chimeras,
 )
+from mito_marker.analysis.ml_config import DEFAULT_MODEL_PARAMS, configure_ml, get_default_ml_config
+from mito_marker.analysis.ml_mil import get_mil_attention_dataframe, plot_mil_attention
+from mito_marker.analysis.ml_pipeline import (
+    get_sfc_feature_subsets,
+    plot_feature_vs_target,
+    run_feature_subset_challenge,
+    run_ml_analysis,
+)
+from mito_marker.analysis.normalization import transform_and_normalize
+from mito_marker.analysis.pca_plot import (
+    compute_pca,
+    get_top_loading_channels,
+    plot_pca_3d_biplot,
+    plot_pca_3d_scatter,
+    plot_pca_3d_trajectory,
+    plot_pca_biplot,
+    plot_pca_loadings_bar,
+    plot_pca_scatter,
+    plot_pca_trajectory,
+)
+from mito_marker.analysis.permutation_test import run_permutation_test
+from mito_marker.analysis.phylo_tanglegram import (
+    compute_clade_support,
+    compute_tanglegram_sensitivity,
+    plot_phylo_tanglegram,
+)
+from mito_marker.analysis.phylogeny import (
+    assert_ultrametric_divergence_times,
+    build_species_phylogeny_linkage,
+    get_linkage_clades,
+    linkage_to_newick_string,
+)
+from mito_marker.analysis.preprocessing_config import (
+    ALLOWED_FEATURE_SELECTION_METHODS,
+    ALLOWED_NORMALIZATIONS,
+    ALLOWED_TRANSFORMS,
+    configure_preprocessing,
+    get_default_preprocessing_config,
+)
+from mito_marker.analysis.preprocessing_pipeline import run_preprocessing
+from mito_marker.analysis.radar_plot import plot_radar
+from mito_marker.analysis.report import ReportBuilder
+from mito_marker.analysis.selection import select_sfc_subset
+from mito_marker.analysis.shap_clustering import (
+    cluster_shap_values,
+    plot_shap_cluster_heatmap,
+)
+from mito_marker.analysis.stratification import (
+    bin_obs_column,
+    map_obs_values,
+    split_obs_by_threshold,
+)
+from mito_marker.analysis.time_curve import plot_time_curve
+from mito_marker.analysis.umap_plot import compute_umap, plot_umap
 
 __all__ = [
     # Step 1 — subset selection
@@ -190,6 +199,7 @@ __all__ = [
     "assign_color_palette",
     "get_color_for_value",
     "get_subject_colors",
+    "sort_values_for_legend",
     # Step 4b — population stratification
     "bin_obs_column",
     "split_obs_by_threshold",
@@ -239,6 +249,7 @@ __all__ = [
     "run_ml_analysis",
     "run_feature_subset_challenge",
     "get_sfc_feature_subsets",
+    "plot_feature_vs_target",
     "plot_mil_attention",
     "get_mil_attention_dataframe",
     "run_permutation_test",

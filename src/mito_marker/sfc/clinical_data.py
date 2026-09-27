@@ -174,7 +174,7 @@ def enrich_with_clinical_data(
     matched_subjects = unique_anndata_subjects & unique_clinical_subjects
     unmatched_subjects = unique_anndata_subjects - unique_clinical_subjects
 
-    print(f"\nStep 5: Subject ID matching")
+    print("\nStep 5: Subject ID matching")
     print(f"  Subjects in AnnData            : {len(unique_anndata_subjects)}")
     print(f"  Subjects in CSV                : {len(unique_clinical_subjects)}")
     print(f"  Matched (will get data)        : {len(matched_subjects)}")

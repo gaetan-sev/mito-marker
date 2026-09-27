@@ -2656,7 +2656,7 @@ def run_mhi_statistics(
                 "posthoc": None,
                 "note": "fewer than 2 groups with valid data",
             }
-            print(f"    WARNING: fewer than 2 groups — skipping.")
+            print("    WARNING: fewer than 2 groups — skipping.")
             continue
 
         group_names = list(groups_data.keys())
@@ -3075,7 +3075,7 @@ def plot_mhi_barplot(
     fig, ax = plt.subplots(figsize=(max(5, 1.5 * len(sorted_groups)), 5))
 
     x_positions = np.arange(len(sorted_groups))
-    bars = ax.bar(
+    ax.bar(
         x_positions,
         medians,
         color=bar_colors,
@@ -3221,7 +3221,7 @@ def plot_mhi_scatter_de(
     ax.set_xlabel("MHI-D (Dispersion — median distance to centroid)", fontsize=11)
     ax.set_ylabel("MHI-E (KNN Entropy)", fontsize=11)
     ax.set_title(
-        f"MHI-D vs MHI-E per individual\n(diamonds = group centroids, crosses = ±1 std)",
+        "MHI-D vs MHI-E per individual\n(diamonds = group centroids, crosses = ±1 std)",
         fontsize=12,
     )
     ax.legend(fontsize=9, title=group_column, loc="best")

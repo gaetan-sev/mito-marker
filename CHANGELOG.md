@@ -26,3 +26,5 @@ No behaviour change: the full test suite passes with both anndata 0.12 and 0.13.
 - Compatibility with anndata 0.13, which exposes `.X` as `layers[None]`. The AllMitoMean
   reference row (`compute_all_mito_mean()` and every AMHI function built on it) no
   longer fails, and the inspector, report and subset QC list named layers only.
+- Lint: `ruff check src/` passes (import order, unused imports and variables,
+  f-strings without placeholders, lambda assignments, type-only `torch` import).
