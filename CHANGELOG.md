@@ -20,3 +20,9 @@ state of 2026-09-25; only its home changed.
 ### Added
 - Continuous integration: `pytest` and `ruff` run on every push to `main` and on pull requests.
 - This changelog.
+
+### Fixed
+No behaviour change: the full test suite passes with both anndata 0.12 and 0.13.
+- Compatibility with anndata 0.13, which exposes `.X` as `layers[None]`. The AllMitoMean
+  reference row (`compute_all_mito_mean()` and every AMHI function built on it) no
+  longer fails, and the inspector, report and subset QC list named layers only.

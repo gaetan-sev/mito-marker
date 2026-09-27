@@ -634,7 +634,9 @@ def compute_all_mito_mean(
         # intensities) and breaks the radar plot axis.
         synthetic_layers: Dict[str, np.ndarray] = {}
         for layer_key in working_anndata.layers:
-            if layer_key not in reference_anndata.layers:
+            # anndata >= 0.13 exposes .X as layers[None]; it is not a
+            # normalisation layer and must not be copied as one.
+            if layer_key is None or layer_key not in reference_anndata.layers:
                 continue
             ref_layer = reference_anndata.layers[layer_key]
             if hasattr(ref_layer, "toarray"):

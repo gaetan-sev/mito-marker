@@ -231,7 +231,8 @@ class TestTransformAndNormalize:
         """When both choices are 'None' (input '1a'), no layer is added."""
         monkeypatch.setattr("builtins.input", _make_input_sequence(["1a"]))
         result = transform_and_normalize(test_anndata)
-        assert len(result.layers) == 0
+        # anndata >= 0.13 exposes .X as layers[None]; count named layers only.
+        assert [key for key in result.layers if key is not None] == []
 
     def test_none_none_sets_active_layer_to_none(self, test_anndata, monkeypatch):
         monkeypatch.setattr("builtins.input", _make_input_sequence(["1a"]))

@@ -286,7 +286,9 @@ def print_anndata_qc(anndata_object: anndata.AnnData, step_name: str) -> None:
     print(anndata_object.var.head())
     print(f".obsm keys: {list(anndata_object.obsm.keys())}")
     print(f".uns keys: {list(anndata_object.uns.keys())}")
-    print(f".layers keys: {list(anndata_object.layers.keys())}")
+    # anndata >= 0.13 exposes .X as layers[None]; list named layers only.
+    named_layer_keys = [key for key in anndata_object.layers.keys() if key is not None]
+    print(f".layers keys: {named_layer_keys}")
     if anndata_object.n_obs > 0:
         x_matrix = anndata_object.X
         if hasattr(x_matrix, "toarray"):

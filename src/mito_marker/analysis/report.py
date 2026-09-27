@@ -704,7 +704,8 @@ def _collect_metadata_lines(
     lines.append("-" * 50)
     lines.append(f"  Observations (events / cells): {anndata_object.n_obs:>10,}")
     lines.append(f"  Variables (channels / features): {anndata_object.n_vars:>8}")
-    raw_layer_keys = list(anndata_object.layers.keys())
+    # anndata >= 0.13 exposes .X as layers[None]; that key is not an error.
+    raw_layer_keys = [key for key in anndata_object.layers.keys() if key is not None]
     # Layer keys are expected to be non-empty strings (see normalization.py).
     # A non-string/None key means something upstream did `anndata_object.layers[x] = ...`
     # with an unset variable — surface it instead of crashing the report.

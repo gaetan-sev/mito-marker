@@ -640,7 +640,8 @@ def test_run_preprocessing_combined_selection_is_intersection(test_anndata):
 def test_run_preprocessing_no_transform_no_norm_no_layer_created(test_anndata):
     config = _make_minimal_config(transform="none", normalization="none")
     result = run_preprocessing(test_anndata, config)
-    assert len(result.layers) == 0
+    # anndata >= 0.13 exposes .X as layers[None]; count named layers only.
+    assert [key for key in result.layers if key is not None] == []
     assert result.uns[_ANALYSIS_CONFIG_KEY]["active_layer"] is None
 
 

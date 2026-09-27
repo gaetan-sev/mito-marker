@@ -542,7 +542,8 @@ def _render_overview_tab(
         f", {x_info['density_percent']:.1f}% filled" if x_info["is_sparse"] else ""
     )
 
-    layers_keys = list(anndata_object.layers.keys()) if anndata_object.layers else []
+    # anndata >= 0.13 exposes .X as layers[None]; list named layers only.
+    layers_keys = [key for key in anndata_object.layers.keys() if key is not None]
     obsm_keys = list(anndata_object.obsm.keys()) if anndata_object.obsm else []
     uns_keys = list(anndata_object.uns.keys()) if anndata_object.uns else []
 
@@ -858,7 +859,8 @@ def _print_console_summary(
         f", {x_info['density_percent']:.1f}% filled" if x_info["is_sparse"] else ""
     )
 
-    layers_keys = list(anndata_object.layers.keys()) if anndata_object.layers else []
+    # anndata >= 0.13 exposes .X as layers[None]; list named layers only.
+    layers_keys = [key for key in anndata_object.layers.keys() if key is not None]
     obsm_keys = list(anndata_object.obsm.keys()) if anndata_object.obsm else []
     uns_keys = list(anndata_object.uns.keys()) if anndata_object.uns else []
 

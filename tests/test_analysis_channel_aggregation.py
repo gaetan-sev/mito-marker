@@ -262,7 +262,8 @@ class TestLayerHandling:
     def test_result_has_empty_layers(self) -> None:
         adata = _make_sfc_anndata_with_layer()
         result = aggregate_sfc_channels_by_color(adata)
-        assert len(result.layers) == 0
+        # anndata >= 0.13 exposes .X as layers[None]; count named layers only.
+        assert [key for key in result.layers if key is not None] == []
 
 
 # ---------------------------------------------------------------------------
