@@ -28,3 +28,4 @@ No behaviour change: the full test suite passes with both anndata 0.12 and 0.13.
   longer fails, and the inspector, report and subset QC list named layers only.
 - Lint: `ruff check src/` passes (import order, unused imports and variables,
   f-strings without placeholders, lambda assignments, type-only `torch` import).
+- CI: `actions/checkout@v5` and `actions/setup-python@v6` (Node 20 deprecation).
