@@ -6,7 +6,7 @@ Install a release with `pip install git+https://github.com/gaetan-sev/mito-marke
 
 ## [Unreleased]
 
-## [0.2.0] — 2026-09-26
+## [0.2.0] — 2026-09-27
 
 First release from this dedicated repository. The package code is the development
 state of 2026-09-25; only its home changed.
