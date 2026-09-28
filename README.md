@@ -1015,15 +1015,8 @@ pytest tests/
 
 ### Google Colab (end users)
 
-The repository is **private**, so installing it requires a GitHub Personal
-Access Token (PAT) with read access to `mito-marker`:
-
-1. Repository owner: add the collaborator under
-   [Settings → Collaborators](https://github.com/gaetan-sev/mito-marker/settings/access).
-2. Collaborator: create a fine-grained PAT scoped to this repository only
-   (read-only, `Contents` permission), then store it in Colab's **Secrets**
-   manager (key icon in the left sidebar) under a name such as
-   `GITHUB_TOKEN` — never paste a token directly into a notebook cell.
+The repository is **public**: installing the package needs no GitHub account
+or token.
 
 Always install a release tag, never `main`: the package is under active
 development and past changes have included breaking renames with no
@@ -1032,17 +1025,20 @@ a tag keeps working even after the package changes upstream. The available
 tags and what changed in each are listed in `CHANGELOG.md`; changes marked
 **Breaking** require updating your notebook before moving to that version.
 
+Without `@vX.Y.Z`, pip installs the current state of `main`, including
+unreleased changes — not the latest release. When the requested version
+number differs from the installed one, pip replaces it; when it is the same
+(e.g. installing `main` over the release it started from), pip reports
+"already satisfied" unless you add `--force-reinstall`. A fresh Colab runtime
+starts empty, so this only matters within a running session.
+
 ```python
 # Mount Google Drive (where raw .fcs / .txt files live)
 from google.colab import drive
 drive.mount("/content/drive")
 
-# Read the GitHub token from Colab's Secrets manager (never hardcode it)
-from google.colab import userdata
-github_token = userdata.get("GITHUB_TOKEN")
-
 # Install a release tag (see CHANGELOG.md for the latest one)
-!pip install git+https://{github_token}@github.com/gaetan-sev/mito-marker.git@v0.2.1
+!pip install git+https://github.com/gaetan-sev/mito-marker.git@v0.2.1
 
 # SFC ingestion
 from mito_marker import ingest_sfc_folder
