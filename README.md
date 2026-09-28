@@ -523,7 +523,9 @@ Fits UMAP on a stratified random sample. Key: `X_umap_n{n_neighbors}_d{min_dist}
 
 Fits PCA on all events. Stores loadings and explained variance in `.uns`. Includes 3D interactive variants: `plot_pca_3d_scatter`, `plot_pca_3d_biplot`, `plot_pca_3d_trajectory` (Plotly).
 
-`get_top_loading_channels(anndata_object, pc_index=0, top_n=5)` returns the `top_n` channels with the highest absolute loading on one component, as `(channel_name, loading_value)` tuples. `plot_pca_loadings_bar(anndata_object, top_n=5, n_components=3)` prints and plots, per component, the top channels ranked by their percentage share of that component's total absolute loading, plus a cross-component summary of every channel that appears in any per-component top-N list.
+Every PCA plot shows a **loadings panel** in its right-hand column, below the color legend: for each PC its explained variance and its top features with their % contribution to the axis, `loading² × 100` (FactoMineR / factoextra convention, ADR-016; contributions sum to 100% on each PC; "+"/"-" gives the sign of the loading). The 2D plots (`plot_pca_scatter`, `plot_pca_biplot`, `plot_pca_trajectory`) take `show_loadings=True`, `loadings_top_n=5` and `loadings_n_components=3`; the 3D plots take `show_loadings=True` and `loadings_top_n=5` and list the three displayed axes. The console always prints the panel and how the loadings were computed (standard or weighted PCA, input layer, formula).
+
+`get_top_loading_channels(anndata_object, pc_index=0, top_n=5)` returns the `top_n` channels with the highest absolute loading on one component, as `(channel_name, loading_value)` tuples. `plot_pca_loadings_bar(anndata_object, top_n=5, n_components=3)` prints and plots, per component, the top channels ranked by % contribution (`loading² × 100`), plus a cross-component summary of every channel that appears in any per-component top-N list, with its total contribution weighted by each PC's explained variance.
 
 ##### `plot_histogram` / `plot_density` / `plot_violin` — `distribution_plots.py`
 
