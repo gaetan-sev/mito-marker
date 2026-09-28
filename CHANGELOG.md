@@ -6,6 +6,31 @@ Install a release with `pip install git+https://github.com/gaetan-sev/mito-marke
 
 ## [Unreleased]
 
+### Added
+- Every PCA plot shows a loadings panel in its right-hand column, below the color
+  legend: for each PC (PC1–PC3 in 2D, the three displayed axes in 3D) its explained
+  variance and its top 5 features with their % contribution to the axis
+  (loading² × 100, ADR-016). Applies to `plot_pca_scatter()`, `plot_pca_biplot()`,
+  `plot_pca_trajectory()`, `plot_pca_3d_scatter()`, `plot_pca_3d_biplot()` and
+  `plot_pca_3d_trajectory()`. New parameters `show_loadings` (default `True`) and
+  `loadings_top_n` (default 5), plus `loadings_n_components` (default 3) on the 2D plots.
+- Every function that shows PCA loadings prints how they were computed (standard or
+  weighted PCA, input layer, contribution formula). The `PCALoadings` feature selection
+  prints its scoring formula.
+
+### Changed
+- **Changed values**: `plot_pca_loadings_bar()` and the AMHI console now report
+  contributions as loading² × 100 instead of |loading| / Σ|loading| × 100, the standard
+  of FactoMineR / factoextra (ADR-016). The ranking of features within a PC is unchanged;
+  the percentages are not comparable with figures made before. The cross-component
+  "Total" is now weighted by each PC's explained variance (sums to 100%).
+- `plot_pca_trajectory()` places its legend in the right-hand column instead of inside
+  the plot, to make room for the loadings panel.
+
+### Fixed
+- With more than 15 groups, the legend placed below `plot_pca_scatter()` and
+  `plot_pca_biplot()` no longer covers the x-axis label.
+
 ## [0.2.0] — 2026-09-27
 
 First release from this dedicated repository. The package code is the development

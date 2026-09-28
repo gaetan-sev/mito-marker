@@ -51,6 +51,15 @@ _DEFAULT_CORR_FILTER_THRESHOLD = 0.95
 # Number of PCA components used when scoring channels via PCA loadings.
 _PCA_LOADINGS_N_COMPONENTS = 20
 
+# Printed wherever the PCALoadings method runs, so the console states the
+# algorithm behind the ranking (see _score_pca_loadings and ADR-016).
+_PCA_LOADINGS_SCORE_FORMULA_TEXT = (
+    "PCALoadings score of channel j = sum over the first "
+    f"{_PCA_LOADINGS_N_COMPONENTS} PCs (or fewer) of explained_variance_ratio_k × |loading_jk| "
+    "(standard sklearn PCA on the candidate channels). Ranking score only, "
+    "not a % contribution (ADR-016)."
+)
+
 # .var column that flags channels carrying no biological information (Time,
 # FlowAI).  Set at ingestion time by anndata_builder._build_var_dataframe().
 _IS_NON_ANALYTICAL_COL = "is_non_analytical"
@@ -267,6 +276,7 @@ def select_channels(anndata_object: anndata.AnnData) -> anndata.AnnData:
         elif method_name == _METHOD_HIGH_VARIANCE:
             pool_scores = _score_high_variance(pool_matrix)
         elif method_name == _METHOD_PCA_LOADINGS:
+            print(f"  {_PCA_LOADINGS_SCORE_FORMULA_TEXT}")
             pool_scores = _score_pca_loadings(pool_matrix, n_pool)
         elif method_name == _METHOD_SHAP_IMPORTANCE:
             all_scores = _score_shap_importance(anndata_object)

@@ -13,6 +13,11 @@ Functions:
     loading summary to the console and displays a horizontal bar chart of the
     top-N contributing channels.  Auto-captured by ReportBuilder.
 
+Every PCA plot (2D and 3D) shows a loadings panel below its color legend:
+the top features of each PC with their % contribution to the axis
+(loading² × 100, the FactoMineR / factoextra convention — see ADR-016), and
+prints how the loadings were computed.
+
 Unlike UMAP, PCA is fast enough to run on all events — no subsampling is needed
 for computation. Subsampling is still done at plot time for visual clarity.
 
@@ -38,7 +43,9 @@ import matplotlib.figure
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.legend import Legend
 from matplotlib.patches import Ellipse, Polygon
+from matplotlib.transforms import offset_copy
 from scipy.spatial import ConvexHull, QhullError
 from scipy.stats import chi2
 
@@ -451,6 +458,9 @@ def plot_pca_scatter(
     show_centroid_cross: bool = False,
     show_individual_centroids: bool = False,
     nest_aggregate_by: Optional[str] = None,
+    show_loadings: bool = True,
+    loadings_top_n: int = 5,
+    loadings_n_components: int = 3,
 ) -> None:
     """
     Draw a PCA scatter plot (PC1 vs PC2) with group centroids marked.
@@ -507,6 +517,19 @@ def plot_pca_scatter(
         connected by a straight line; a single individual is left as a lone
         disc.
 
+    Loadings panel (show_loadings=True, default):
+        The right-hand column, below the color legend, lists the first
+        loadings_n_components PCs with their explained variance, and for each
+        PC its loadings_top_n channels ranked by % contribution to that axis.
+        Contribution of channel j to PC k = loading[j, k]² × 100 (standard
+        FactoMineR / factoextra definition, ADR-016; the contributions of all
+        channels sum to 100% on each PC). The "+" / "-" before a channel is the sign of
+        its loading: the side of the axis toward which the channel increases.
+        The console always prints the same panel, preceded by how the loadings
+        were computed (standard or weighted PCA, input layer, contribution
+        formula — ADR-016). When the legend is moved below the plot (more than
+        15 groups), the panel sits alone in the right-hand column.
+
     Arguments:
         anndata_object: AnnData with .obsm['X_pca'] populated by compute_pca().
         group_by: Name of the .obs column to color by (e.g. "subject_ID"), or
@@ -562,10 +585,19 @@ def plot_pca_scatter(
         nest_aggregate_by: Name of the .obs column identifying each individual
                        within a group (e.g. "subject_ID"). Required when
                        show_individual_centroids=True; ignored otherwise.
+        show_loadings: When True (default), draw the loadings panel described
+                       above. Set to False for the plot and legend only (the
+                       panel is still printed to the console).
+        loadings_top_n: Number of channels listed per PC in the loadings panel
+                        (default 5, capped at the number of channels).
+        loadings_n_components: Number of PCs listed in the loadings panel
+                               (default 3, capped at the number of PCs computed).
 
     Returns:
         None. The figure is displayed via plt.show().
     """
+    _validate_loadings_panel_arguments(loadings_top_n, loadings_n_components)
+
     # Resolve which limit to use: max_points_per_group takes priority;
     # fall back to n_events_per_group for backwards-compatible call sites.
     effective_max_points = max_points_per_group if max_points_per_group is not None else n_events_per_group
@@ -771,7 +803,15 @@ def plot_pca_scatter(
             f"{len(plot_df):,} events{weight_suffix}"
         )
     ax.set_title(title if title else auto_title, fontsize=13)
-    _apply_legend(ax, group_by_label, len(unique_groups))
+    legend = _apply_legend(ax, group_by_label, len(unique_groups))
+    loadings_panel_text = _prepare_loadings_panel(
+        anndata_object, "plot_pca_scatter", loadings_top_n, list(range(loadings_n_components)),
+    )
+    if show_loadings:
+        _draw_loadings_panel(
+            ax, legend, loadings_panel_text,
+            legend_is_beside_plot=len(unique_groups) <= _MANY_GROUPS_THRESHOLD,
+        )
     ax.grid(True, linestyle="--", alpha=0.3)
     fig.text(
         0.5, 0.01, get_run_context_footer_text(anndata_object),
@@ -789,6 +829,9 @@ def plot_pca_biplot(
     labels: Optional[Union[str, List[str]]] = None,
     max_points_per_group: Optional[int] = None,
     title: str = "",
+    show_loadings: bool = True,
+    loadings_top_n: int = 5,
+    loadings_n_components: int = 3,
 ) -> None:
     """
     Draw a PCA correlation circle (biplot) showing channel loadings and group centroids.
@@ -800,8 +843,12 @@ def plot_pca_biplot(
       - Group centroids plotted as 'X' markers, scaled to fit within the unit
         circle (80% of radius).
 
-    Prints the top_n_variables channels with the highest absolute loading on
-    PC1 and PC2 before showing the figure.
+    Loadings panel (show_loadings=True, default): the right-hand column,
+    below the color legend, lists the first loadings_n_components PCs with
+    their explained variance and their loadings_top_n channels ranked by %
+    contribution (loading² × 100, ADR-016) — same panel as plot_pca_scatter().
+    The console always prints this panel, the loadings method, and the rule
+    used to pick the arrows.
 
     When group_by is a list of column names, values from each column are
     combined with " / " to form one group label per unique combination
@@ -813,8 +860,8 @@ def plot_pca_biplot(
         group_by: Name of the .obs column to color by (e.g. "subject_ID"), or
                   a list of column names whose values are combined into a single
                   group label.
-        top_n_variables: Number of top-loading channels to print for each axis
-                         and to label in the plot.
+        top_n_variables: Number of loading arrows drawn, ranked by loading
+                         magnitude sqrt(loading_PC1² + loading_PC2²).
         labels: Optional .obs column name(s) whose values are appended next to
                 each centroid label, separated by " | ".  Accepts a single
                 string (e.g. "diet") or a list (e.g. ["diet", "age"]).
@@ -827,10 +874,15 @@ def plot_pca_biplot(
                               (no individual points, centroids only).
         title: Optional figure title. When empty (default), an informative
                title is generated automatically.
+        show_loadings: When True (default), draw the loadings panel. The panel
+                       is printed to the console either way.
+        loadings_top_n: Channels listed per PC in the loadings panel (default 5).
+        loadings_n_components: PCs listed in the loadings panel (default 3).
 
     Returns:
         None. The figure is displayed via plt.show().
     """
+    _validate_loadings_panel_arguments(loadings_top_n, loadings_n_components)
     _require_pca_computed(anndata_object)
 
     # Validate and combine grouping columns into a single label Series.
@@ -867,12 +919,17 @@ def plot_pca_biplot(
     loadings_pc1 = loadings[:, 0]
     loadings_pc2 = loadings[:, 1]
 
-    # --- Print run context then top variables before the figure ---
+    # --- Print run context, loadings method and panel before the figure ---
     print(get_run_context_console_text(anndata_object))
     pc1_var = var_ratios[0] if len(var_ratios) > 0 else 0
     pc2_var = var_ratios[1] if len(var_ratios) > 1 else 0
-    _print_top_variables(channel_names, loadings_pc1, loadings_pc2,
-                         pc1_var, pc2_var, top_n_variables)
+    loadings_panel_text = _prepare_loadings_panel(
+        anndata_object, "plot_pca_biplot", loadings_top_n, list(range(loadings_n_components)),
+    )
+    print(
+        f"[plot_pca_biplot] Arrows: top {top_n_variables} channels by loading magnitude "
+        "sqrt(loading_PC1² + loading_PC2²)."
+    )
 
     # --- Scaling: fit centroids and arrows to the unit circle ---
     obs_df = anndata_object.obs.copy()
@@ -936,7 +993,12 @@ def plot_pca_biplot(
         f"(Arrows = channel loadings | Markers = group centroids{weight_suffix})"
     )
     ax.set_title(title if title else auto_title, fontsize=13)
-    _apply_legend(ax, group_by_label, len(unique_groups))
+    legend = _apply_legend(ax, group_by_label, len(unique_groups))
+    if show_loadings:
+        _draw_loadings_panel(
+            ax, legend, loadings_panel_text,
+            legend_is_beside_plot=len(unique_groups) <= _MANY_GROUPS_THRESHOLD,
+        )
     ax.grid(True, linestyle="--", alpha=0.2)
     fig.text(
         0.5, 0.01, get_run_context_footer_text(anndata_object),
@@ -985,6 +1047,9 @@ def plot_pca_trajectory(
     title: str = "",
     color_mode: str = "gradient",
     show_labels: bool = True,
+    show_loadings: bool = True,
+    loadings_top_n: int = 5,
+    loadings_n_components: int = 3,
 ) -> None:
     """
     Draw a PCA trajectory plot showing how each condition's centroid evolves over time.
@@ -999,7 +1064,13 @@ def plot_pca_trajectory(
       - One marker per (condition, timepoint) centroid.
       - Dashed lines connecting each condition's centroids in time order.
       - Optional text labels near each centroid (show_labels=True).
-      - Legend showing conditions and, in gradient mode, the young/old color endpoints.
+      - Legend showing conditions and, in gradient mode, the young/old color
+        endpoints, in the right-hand column.
+      - Loadings panel below the legend (show_loadings=True, default): the
+        first loadings_n_components PCs with their explained variance and
+        their loadings_top_n channels ranked by % contribution (loading² × 100,
+        ADR-016) — same panel as plot_pca_scatter(). Always printed to the
+        console, with the loadings method.
 
     Arguments:
         anndata_object: AnnData with .obsm['X_pca'] populated by compute_pca().
@@ -1007,7 +1078,8 @@ def plot_pca_trajectory(
                           (e.g. "diet" → "AL" / "IF").
         time_column: Name of the .obs column that defines the time axis
                      (e.g. "age" → 0, 2, 8, 10, 14, 16).
-        top_n_variables: Number of top-loading channels to draw as arrows.
+        top_n_variables: Number of loading arrows drawn, ranked by loading
+                         magnitude sqrt(loading_PC1² + loading_PC2²).
         show_loading_arrows: When False, only centroids and trajectories are drawn
                              (no loading arrows).  Useful for a cleaner view when
                              the arrow labels clutter the plot.
@@ -1022,10 +1094,15 @@ def plot_pca_trajectory(
         show_labels: When True (default), show "{condition} | {timepoint}" text near
                      each centroid.  Set to False to remove all text annotations —
                      most useful combined with color_mode="gradient".
+        show_loadings: When True (default), draw the loadings panel. The panel
+                       is printed to the console either way.
+        loadings_top_n: Channels listed per PC in the loadings panel (default 5).
+        loadings_n_components: PCs listed in the loadings panel (default 3).
 
     Returns:
         None. The figure is displayed via plt.show().
     """
+    _validate_loadings_panel_arguments(loadings_top_n, loadings_n_components)
     _require_pca_computed(anndata_object)
 
     if condition_column not in anndata_object.obs.columns:
@@ -1055,9 +1132,15 @@ def plot_pca_trajectory(
     pc1_var = var_ratios[0] if len(var_ratios) > 0 else 0.0
     pc2_var = var_ratios[1] if len(var_ratios) > 1 else 0.0
 
-    # Print top variables so the user can understand the axes.
-    _print_top_variables(channel_names, loadings_pc1, loadings_pc2,
-                         pc1_var, pc2_var, top_n_variables)
+    # Print the loadings so the user can understand the axes.
+    loadings_panel_text = _prepare_loadings_panel(
+        anndata_object, "plot_pca_trajectory", loadings_top_n, list(range(loadings_n_components)),
+    )
+    if show_loading_arrows:
+        print(
+            f"[plot_pca_trajectory] Arrows: top {top_n_variables} channels by loading "
+            "magnitude sqrt(loading_PC1² + loading_PC2²)."
+        )
 
     # Build working dataframe with PCA coordinates.
     obs_df = anndata_object.obs[[condition_column, time_column]].copy()
@@ -1241,8 +1324,12 @@ def plot_pca_trajectory(
                 Patch(facecolor=palette[0], edgecolor="black", linewidth=0.5,
                       label=str(condition_value))
             )
-    ax.legend(handles=legend_handles, title=condition_column, fontsize=9,
-              title_fontsize=9, loc="upper right", framealpha=0.9)
+    # Legend in the right-hand column (not inside the plot) so the loadings
+    # panel can sit below it, as in plot_pca_scatter().
+    legend = ax.legend(handles=legend_handles, title=condition_column, fontsize=9,
+                       title_fontsize=9, bbox_to_anchor=(1.05, 1), loc="upper left")
+    if show_loadings:
+        _draw_loadings_panel(ax, legend, loadings_panel_text, legend_is_beside_plot=True)
 
     ax.grid(True, linestyle="--", alpha=0.2)
     fig.text(
@@ -1298,17 +1385,25 @@ def plot_pca_loadings_bar(
     Print a structured loading summary and display a horizontal bar chart of the
     top contributing channels for the first ``n_components`` PCA components.
 
-    Two console blocks are printed:
-      1. Per-component block — top ``top_n`` channels ranked by their percentage
-         share of absolute loading on that component.
+    Two console blocks are printed, after a line stating how the loadings and
+    contributions were computed:
+      1. Per-component block — top ``top_n`` channels ranked by their %
+         contribution to that component.
       2. Cross-component feature summary — every unique channel that appears in
-         any per-component top-N list, showing its loading percentage across all
-         components.  Sorted by total contribution (sum across components).
+         any per-component top-N list, showing its % contribution to each
+         component and its total contribution over all shown components.
+         Sorted by total contribution.
 
-    The percentage shown is the channel's absolute loading divided by the sum of
-    all absolute loadings for that component, expressed as a percentage.  It is
-    **not** the explained variance ratio — it quantifies how dominant a channel is
-    within a single PC.
+    Contribution of channel j to PC k = loading[j, k]² × 100 (FactoMineR /
+    factoextra convention, ADR-016). Loadings are unit-norm eigenvectors, so
+    the contributions of all channels sum to 100% on each PC. It is **not**
+    the explained variance ratio — it quantifies how much of a PC's direction
+    a channel carries.
+
+    The total contribution is weighted by each PC's explained variance:
+    sum_k(contribution_jk × variance_k) / sum_k(variance_k), as in
+    factoextra's fviz_contrib(axes = 1:n). A PC explaining little variance
+    therefore weighs little, and the totals of all channels sum to 100%.
 
     A matplotlib figure with one horizontal-bar subplot per component is produced
     and displayed via ``plt.show()``.  When called inside a ``ReportBuilder`` context
@@ -1351,20 +1446,16 @@ def plot_pca_loadings_bar(
     n_components = min(n_components, n_available_components)
 
     # -----------------------------------------------------------------------
-    # Pre-compute loading percentages for all components.
-    # Percentage = abs(loading) / sum(abs(loadings for this PC)) * 100.
+    # Pre-compute % contributions (loading² × 100, ADR-016) for all components,
+    # and each channel's variance-weighted total over the shown components.
     # -----------------------------------------------------------------------
-    def _loading_pct_for_pc(pc_idx: int) -> np.ndarray:
-        """Return loading percentages for every channel on one component."""
-        absolute_loadings = np.abs(loadings_matrix[:, pc_idx])
-        total_absolute = absolute_loadings.sum()
-        if total_absolute == 0.0:
-            return np.zeros_like(absolute_loadings)
-        return absolute_loadings / total_absolute * 100.0
-
+    contributions = _compute_loading_contributions(loadings_matrix[:, :n_components])
     loading_pct_per_pc: List[np.ndarray] = [
-        _loading_pct_for_pc(pc_idx) for pc_idx in range(n_components)
+        contributions[:, pc_idx] for pc_idx in range(n_components)
     ]
+    total_contribution_per_channel = _compute_total_contributions(
+        contributions, var_ratios[:n_components]
+    )
 
     # Top-N indices per component (sorted by descending %).
     top_indices_per_pc: List[List[int]] = [
@@ -1376,6 +1467,11 @@ def plot_pca_loadings_bar(
     # Console output — run context header.
     # -----------------------------------------------------------------------
     print(get_run_context_console_text(anndata_object))
+    _print_loadings_method(anndata_object, "plot_pca_loadings_bar")
+    print(
+        "[plot_pca_loadings_bar] Total = variance-weighted contribution over the shown PCs: "
+        "sum_k(contribution_k × variance_k) / sum_k(variance_k) (factoextra fviz_contrib)."
+    )
     separator = "=" * 60
     divider = "-" * 60
     print(separator)
@@ -1408,9 +1504,9 @@ def plot_pca_loadings_bar(
                 unique_top_channel_indices.append(channel_idx)
                 seen.add(channel_idx)
 
-    # Sort unique features by their sum of loading percentages across all components.
+    # Sort unique features by their variance-weighted total contribution.
     unique_top_channel_indices.sort(
-        key=lambda idx: sum(loading_pct_per_pc[pc][idx] for pc in range(n_components)),
+        key=lambda idx: total_contribution_per_channel[idx],
         reverse=True,
     )
 
@@ -1431,7 +1527,7 @@ def plot_pca_loadings_bar(
         )
         pc_values = [loading_pct_per_pc[pc_idx][channel_idx] for pc_idx in range(n_components)]
         pc_cells = "".join(f"  {v:5.1f}%" for v in pc_values)
-        total_contribution = sum(pc_values)
+        total_contribution = total_contribution_per_channel[channel_idx]
         print(f"  {channel_name:<30s}{pc_cells}  {total_contribution:6.1f}%")
 
     print()
@@ -1500,7 +1596,7 @@ def plot_pca_loadings_bar(
             fontsize=11,
             fontweight="bold",
         )
-        axis.set_xlabel("% of absolute loading", fontsize=9)
+        axis.set_xlabel("% contribution (loading² × 100)", fontsize=9)
         axis.tick_params(axis="y", labelsize=9)
         axis.tick_params(axis="x", labelsize=8)
 
@@ -1529,6 +1625,7 @@ def plot_pca_loadings_bar(
         channel_names=channel_names,
         unique_top_channel_indices=unique_top_channel_indices,
         loading_pct_per_pc=loading_pct_per_pc,
+        total_contribution_per_channel=total_contribution_per_channel,
         n_components=n_components,
         top_n=top_n,
     )
@@ -1540,6 +1637,7 @@ def _build_cross_component_text_figure(
     channel_names: List[str],
     unique_top_channel_indices: List[int],
     loading_pct_per_pc: List[np.ndarray],
+    total_contribution_per_channel: np.ndarray,
     n_components: int,
     top_n: int,
 ) -> matplotlib.figure.Figure:
@@ -1553,7 +1651,10 @@ def _build_cross_component_text_figure(
         channel_names: Ordered list of channel/feature names.
         unique_top_channel_indices: Indices of features that appear in the top-N
             of at least one component, sorted by descending total contribution.
-        loading_pct_per_pc: List of percentage arrays, one per component.
+        loading_pct_per_pc: List of % contribution arrays (loading² × 100), one
+            per component.
+        total_contribution_per_channel: Variance-weighted total contribution of
+            each channel over the shown components (_compute_total_contributions).
         n_components: Number of PCA components shown.
         top_n: The ``top_n`` value used to select the features (used in the title).
 
@@ -1565,6 +1666,7 @@ def _build_cross_component_text_figure(
     divider = "-" * 60
 
     lines.append(f"CROSS-COMPONENT FEATURE SUMMARY  (unique features across top {top_n})")
+    lines.append("Contribution = loading² × 100 (ADR-016). Total = weighted by each PC's explained variance.")
     lines.append(divider)
 
     # Header row.
@@ -1580,7 +1682,7 @@ def _build_cross_component_text_figure(
         )
         pc_values = [loading_pct_per_pc[pc_idx][channel_idx] for pc_idx in range(n_components)]
         pc_cells = "".join(f"  {v:5.1f}%" for v in pc_values)
-        total_contribution = sum(pc_values)
+        total_contribution = total_contribution_per_channel[channel_idx]
         lines.append(f"  {channel_name:<30s}{pc_cells}  {total_contribution:6.1f}%")
 
     text_content = "\n".join(lines)
@@ -1605,6 +1707,29 @@ def _build_cross_component_text_figure(
 # ---------------------------------------------------------------------------
 
 _MANY_GROUPS_THRESHOLD = 15
+
+# Distance between the bottom of the axes and a legend placed below the plot:
+# tick labels (10 pt) + x-axis label (12 pt) + their paddings, plus a gap.
+_LEGEND_BELOW_AXES_OFFSET_POINTS = 42
+
+# Maximum characters of a channel name in the loadings panel of PCA plots.
+_LOADINGS_PANEL_NAME_WIDTH = 22
+
+# Approximate pixel sizes used to place the loadings panel in Plotly figures
+# (default legend font 12 px, panel in 10 px monospace).
+_PLOTLY_LEGEND_TITLE_PX = 30
+_PLOTLY_LEGEND_ENTRY_PX = 20
+_PLOTLY_LEGEND_ENTRY_WIDTH_PX = 90
+_PLOTLY_FOOTER_PX = 20
+_PLOTLY_PANEL_LINE_PX = 14
+_PLOTLY_PANEL_CHAR_PX = 6
+
+# Printed by every function that shows loading percentages (ADR-016).
+_LOADING_CONTRIBUTION_FORMULA_TEXT = (
+    "Contribution (%) of feature j to PC k = loading_jk² × 100 "
+    "(FactoMineR / factoextra convention, ADR-016): the share of the PC's "
+    "direction carried by the feature; contributions sum to 100% on each PC."
+)
 
 
 def _compute_confidence_ellipse_params(
@@ -1800,7 +1925,7 @@ def _draw_loading_arrows(
         )
 
 
-def _apply_legend(ax: plt.Axes, group_by: str, n_unique_groups: int) -> None:
+def _apply_legend(ax: plt.Axes, group_by: str, n_unique_groups: int) -> Legend:
     """
     Place the legend below the plot when there are many groups, to the right otherwise.
 
@@ -1812,18 +1937,328 @@ def _apply_legend(ax: plt.Axes, group_by: str, n_unique_groups: int) -> None:
         ax: The matplotlib Axes on which to add the legend.
         group_by: Label used as the legend title.
         n_unique_groups: Number of distinct groups — controls ncol and placement.
+
+    Returns:
+        The Legend artist, so other elements (e.g. the loadings panel) can be
+        anchored to it.
     """
     if n_unique_groups > _MANY_GROUPS_THRESHOLD:
         legend_ncol = max(1, ceil(n_unique_groups / _MANY_GROUPS_THRESHOLD))
-        ax.legend(
+        # Anchor a fixed distance (in points) below the bottom of the axes, so the
+        # legend clears the tick labels and the x-axis label whatever the figure
+        # size. An offset in axes fraction would shrink with short figures and
+        # make the legend cover the x-axis label.
+        below_x_axis_label = offset_copy(
+            ax.transAxes, fig=ax.figure, y=-_LEGEND_BELOW_AXES_OFFSET_POINTS, units="points",
+        )
+        return ax.legend(
             loc="upper center",
-            bbox_to_anchor=(0.5, -0.08),
+            bbox_to_anchor=(0.5, 0.0),
+            bbox_transform=below_x_axis_label,
             ncol=legend_ncol,
             fontsize=7,
             title=group_by,
         )
+    return ax.legend(title=group_by, bbox_to_anchor=(1.05, 1), loc="upper left")
+
+
+def _compute_loading_contributions(loadings_matrix: np.ndarray) -> np.ndarray:
+    """
+    Return the % contribution of every channel to every principal component.
+
+    Contribution of channel j to PC k = loading[j, k]² × 100. The stored
+    loadings are unit-norm eigenvectors, so on each PC the squared loadings
+    sum to 1: the contributions of all channels sum to 100%. This is the
+    definition used by FactoMineR / factoextra (fviz_contrib) and by
+    Abdi & Williams (2010); see ADR-016.
+
+    Arguments:
+        loadings_matrix: shape (n_channels, n_components), from
+                         .uns['pca_loadings'] or sklearn's components_.T.
+
+    Returns:
+        Array of the same shape, in percent.
+    """
+    return np.asarray(loadings_matrix, dtype=np.float64) ** 2 * 100.0
+
+
+def _compute_total_contributions(
+    contributions: np.ndarray,
+    var_ratios: np.ndarray,
+) -> np.ndarray:
+    """
+    Return each channel's total contribution to a set of PCs, weighted by their variance.
+
+    Total contribution of channel j to PCs 1..n =
+        sum_k(contribution[j, k] × variance_k) / sum_k(variance_k).
+    A PC that explains little variance therefore weighs little in the total,
+    and the totals of all channels still sum to 100%. This is the multi-axis
+    contribution of factoextra's fviz_contrib(axes = 1:n); see ADR-016.
+
+    Arguments:
+        contributions: shape (n_channels, n_components) — from
+                       _compute_loading_contributions(), restricted to the
+                       PCs of interest.
+        var_ratios: shape (n_components,) — explained variance ratio of the
+                    same PCs.
+
+    Returns:
+        1-D array of shape (n_channels,), in percent.
+    """
+    variance_weights = np.asarray(var_ratios, dtype=np.float64)
+    if variance_weights.sum() == 0:
+        return np.zeros(contributions.shape[0])
+    return contributions @ variance_weights / variance_weights.sum()
+
+
+def _print_loadings_method(anndata_object: anndata.AnnData, function_name: str) -> None:
+    """
+    Print how the PCA loadings and their % contributions were computed.
+
+    Every function that shows loadings or loading percentages calls this, so
+    the console always states the algorithm behind the numbers: standard or
+    weighted PCA (ADR-011), the layer it was fitted on, and the contribution
+    formula (ADR-016).
+
+    Arguments:
+        anndata_object: AnnData with compute_pca() results in .uns.
+        function_name: Name of the calling function, used as the line prefix.
+    """
+    weight_by = anndata_object.uns.get(_PCA_WEIGHT_BY_KEY)
+    if weight_by:
+        fit_description = (
+            f"weighted covariance matrix (weighted PCA, weight_by={list(weight_by)}, ADR-011)"
+        )
     else:
-        ax.legend(title=group_by, bbox_to_anchor=(1.05, 1), loc="upper left")
+        fit_description = "covariance matrix (standard PCA, sklearn / cuML)"
+    input_layer = anndata_object.uns.get(_PCA_INPUT_LAYER_KEY)
+    if input_layer is None:
+        layer_description = "an unrecorded layer"
+    elif input_layer == "":
+        layer_description = "raw .X"
+    else:
+        layer_description = f"layer '{input_layer}'"
+    print(
+        f"[{function_name}] Loadings: unit-norm eigenvectors of the {fit_description}, "
+        f"fitted on {layer_description}."
+    )
+    print(f"[{function_name}] {_LOADING_CONTRIBUTION_FORMULA_TEXT}")
+
+
+def _validate_loadings_panel_arguments(
+    loadings_top_n: int,
+    loadings_n_components: Optional[int] = None,
+) -> None:
+    """
+    Raise a ValueError when a loadings panel argument is below 1.
+
+    Arguments:
+        loadings_top_n: Channels listed per PC.
+        loadings_n_components: PCs listed, or None for the 3D plots, whose
+                               panel lists the three displayed PCs.
+    """
+    if loadings_top_n < 1:
+        raise ValueError(f"loadings_top_n must be at least 1, got {loadings_top_n}.")
+    if loadings_n_components is not None and loadings_n_components < 1:
+        raise ValueError(
+            f"loadings_n_components must be at least 1, got {loadings_n_components}."
+        )
+
+
+def _build_loadings_panel_text(
+    channel_names: List[str],
+    loadings_matrix: np.ndarray,
+    var_ratios: np.ndarray,
+    top_n: int,
+    pc_indices: List[int],
+) -> str:
+    """
+    Build the text of the loadings panel shown beside a PCA plot.
+
+    For each PC in pc_indices: a header with the PC's explained variance, then
+    its top_n channels ranked by % contribution (see
+    _compute_loading_contributions). Each channel line starts with the sign of
+    its loading ("+" = the channel increases along the positive direction of
+    the axis, "-" = along the negative one).
+
+    Arguments:
+        channel_names: Ordered channel names, from .uns['pca_channel_names'].
+        loadings_matrix: shape (n_channels, n_components_fitted).
+        var_ratios: Explained variance ratio of each fitted PC.
+        top_n: Number of channels listed per PC (capped at n_channels).
+        pc_indices: Zero-based indices of the PCs to list, in display order.
+                    Indices beyond the fitted components are skipped.
+
+    Returns:
+        Multi-line string, meant for a monospace font.
+    """
+    pc_indices = [index for index in pc_indices if index < loadings_matrix.shape[1]]
+    top_n = min(top_n, loadings_matrix.shape[0])
+    contributions = _compute_loading_contributions(loadings_matrix)
+
+    lines = [f"PCA loadings — top {top_n} features", "(% contribution = loading² × 100)"]
+    for pc_index in pc_indices:
+        lines.append("")
+        lines.append(f"PC{pc_index + 1} — {float(var_ratios[pc_index]):.1%} of variance")
+        top_indices = np.argsort(contributions[:, pc_index])[::-1][:top_n]
+        for channel_index in top_indices:
+            channel_name = (
+                channel_names[channel_index]
+                if channel_index < len(channel_names)
+                else f"CH{channel_index}"
+            )
+            # Long SFC channel names would widen the panel and squeeze the plot.
+            if len(channel_name) > _LOADINGS_PANEL_NAME_WIDTH:
+                channel_name = channel_name[:_LOADINGS_PANEL_NAME_WIDTH - 1] + "…"
+            sign = "+" if loadings_matrix[channel_index, pc_index] >= 0 else "-"
+            lines.append(
+                f" {sign} {channel_name:<{_LOADINGS_PANEL_NAME_WIDTH}s} "
+                f"{contributions[channel_index, pc_index]:5.1f}%"
+            )
+    return "\n".join(lines)
+
+
+def _prepare_loadings_panel(
+    anndata_object: anndata.AnnData,
+    function_name: str,
+    top_n: int,
+    pc_indices: List[int],
+) -> str:
+    """
+    Print the loadings method and panel to the console, and return the panel text.
+
+    The console output does not depend on show_loadings: the panel is always
+    printed so the axes can be interpreted even when the figure omits it.
+
+    Arguments:
+        anndata_object: AnnData with compute_pca() results.
+        function_name: Name of the calling plot function (console prefix).
+        top_n: Channels listed per PC.
+        pc_indices: Zero-based indices of the PCs to list.
+
+    Returns:
+        The panel text from _build_loadings_panel_text().
+    """
+    panel_text = _build_loadings_panel_text(
+        channel_names=list(anndata_object.uns.get(_PCA_CHANNEL_NAMES_KEY, [])),
+        loadings_matrix=anndata_object.uns[_PCA_LOADINGS_KEY],
+        var_ratios=anndata_object.uns[_PCA_VAR_RATIO_KEY],
+        top_n=top_n,
+        pc_indices=pc_indices,
+    )
+    _print_loadings_method(anndata_object, function_name)
+    print(panel_text)
+    print()
+    return panel_text
+
+
+def _draw_loadings_panel(
+    ax: plt.Axes,
+    legend: Legend,
+    panel_text: str,
+    legend_is_beside_plot: bool,
+) -> None:
+    """
+    Draw the loadings panel in the right-hand column of a matplotlib figure.
+
+    When the legend sits to the right of the plot, the panel is anchored just
+    below it, so it follows the legend whatever its height. When the legend
+    was moved below the plot (many groups), the right-hand column is free and
+    the panel starts at the top of it.
+
+    Arguments:
+        ax: The plot Axes.
+        legend: The plot's Legend.
+        panel_text: Text from _build_loadings_panel_text().
+        legend_is_beside_plot: True when the legend is in the right-hand column.
+    """
+    panel_style = dict(
+        ha="left",
+        va="top",
+        fontfamily="monospace",
+        fontsize=8,
+        bbox=dict(boxstyle="round,pad=0.5", facecolor="white", edgecolor="lightgray"),
+    )
+    if legend_is_beside_plot:
+        # xy=(0, 0) in the legend's own coordinates is its lower-left corner.
+        ax.annotate(
+            panel_text, xy=(0, 0), xycoords=legend,
+            xytext=(0, -12), textcoords="offset points", **panel_style,
+        )
+    else:
+        ax.annotate(panel_text, xy=(1.05, 1.0), xycoords="axes fraction", **panel_style)
+
+
+def _add_loadings_panel_to_plotly_figure(figure: object, panel_text: str) -> None:
+    """
+    Add the loadings panel to the right-hand column of a Plotly figure, below the legend.
+
+    Plotly cannot anchor an annotation to its legend, so the legend height is
+    estimated from its number of entries (about 20 px per entry plus the
+    title) and the panel is placed just below it. When the legend is too tall
+    for the panel to fit below it (many groups), the legend moves below the
+    plot as a horizontal multi-row band — as the matplotlib plots do with
+    more than 15 groups — and the panel starts at the top of the right-hand
+    column. The right (or bottom) margin is widened to make room.
+
+    Arguments:
+        figure: A plotly go.Figure whose layout has a fixed height.
+        panel_text: Text from _build_loadings_panel_text().
+    """
+    panel_lines = panel_text.split("\n")
+    # Non-breaking spaces keep the column alignment: SVG text collapses runs of spaces.
+    panel_html = "<br>".join(line.replace(" ", "\u00a0") for line in panel_lines)
+
+    n_legend_entries = sum(
+        1 for trace in figure.data if trace.showlegend is not False and trace.name
+    )
+    margin = figure.layout.margin
+    plot_height_px = figure.layout.height - (margin.t or 0) - (margin.b or 0)
+    legend_height_px = _PLOTLY_LEGEND_TITLE_PX + _PLOTLY_LEGEND_ENTRY_PX * n_legend_entries
+    panel_height_px = _PLOTLY_PANEL_LINE_PX * len(panel_lines) + 10
+    panel_top = 1.0 - (legend_height_px + 15) / plot_height_px
+    panel_width_px = _PLOTLY_PANEL_CHAR_PX * max(len(line) for line in panel_lines) + 20
+    right_margin_px = panel_width_px + 40
+
+    if panel_top >= panel_height_px / plot_height_px:
+        figure.update_layout(
+            legend=dict(x=1.02, y=1.0, xanchor="left", yanchor="top"),
+            margin=dict(r=right_margin_px),
+        )
+    else:
+        # Legend too tall to leave room for the panel: lay it out in rows below
+        # the plot, and give the whole right-hand column to the panel.
+        paper_width_px = figure.layout.width - (margin.l or 0) - right_margin_px
+        entries_per_row = max(1, paper_width_px // _PLOTLY_LEGEND_ENTRY_WIDTH_PX)
+        legend_rows = ceil(n_legend_entries / entries_per_row)
+        bottom_margin_px = _PLOTLY_LEGEND_TITLE_PX + _PLOTLY_LEGEND_ENTRY_PX * legend_rows + 20
+        figure.update_layout(
+            legend=dict(
+                orientation="h", x=0.0, y=0.0, xanchor="left", yanchor="top",
+                entrywidth=_PLOTLY_LEGEND_ENTRY_WIDTH_PX,
+            ),
+            margin=dict(r=right_margin_px, b=bottom_margin_px + _PLOTLY_FOOTER_PX),
+        )
+        # The run-context footer sits below the plot (negative paper y): push
+        # it under the legend rows so the two do not overlap.
+        for annotation in figure.layout.annotations:
+            if annotation.y is not None and annotation.y < 0:
+                annotation.update(y=0.0, yanchor="top", yshift=-bottom_margin_px)
+        panel_top = 1.0
+
+    figure.add_annotation(
+        text=panel_html,
+        xref="paper", yref="paper",
+        x=1.02, y=panel_top,
+        xanchor="left", yanchor="top",
+        align="left",
+        showarrow=False,
+        font=dict(family="Courier New, monospace", size=10, color="#1a1a1a"),
+        bgcolor="white",
+        bordercolor="lightgray",
+        borderwidth=1,
+        borderpad=6,
+    )
 
 
 def _get_analytical_mask_for_channels(
@@ -2152,44 +2587,6 @@ def _build_centroid_label(
     return " | ".join(parts)
 
 
-def _print_top_variables(
-    channel_names: List[str],
-    loadings_pc1: np.ndarray,
-    loadings_pc2: np.ndarray,
-    pc1_var: float,
-    pc2_var: float,
-    top_n: int,
-) -> None:
-    """
-    Print the top_n channels with highest absolute loading on PC1 and PC2.
-
-    Arguments:
-        channel_names: List of channel name strings.
-        loadings_pc1: 1-D array of loadings on PC1.
-        loadings_pc2: 1-D array of loadings on PC2.
-        pc1_var: Explained variance ratio for PC1.
-        pc2_var: Explained variance ratio for PC2.
-        top_n: Number of top channels to print for each axis.
-    """
-    # Contribution (%): squared loading × 100 (loadings are unit-norm eigenvectors,
-    # so their squared values already sum to 1 — no additional normalisation needed)
-    contributions_pc1 = loadings_pc1 ** 2 * 100
-    contributions_pc2 = loadings_pc2 ** 2 * 100
-
-    print(f"\nPC1 ({pc1_var:.1%}) — top {top_n} channels:")
-    top1_indices = np.argsort(contributions_pc1)[::-1][:top_n]
-    for rank, idx in enumerate(top1_indices, start=1):
-        name = channel_names[idx] if idx < len(channel_names) else f"CH{idx}"
-        print(f"  {rank}. {name:<20} {contributions_pc1[idx]:5.1f}%")
-
-    print(f"\nPC2 ({pc2_var:.1%}) — top {top_n} channels:")
-    top2_indices = np.argsort(contributions_pc2)[::-1][:top_n]
-    for rank, idx in enumerate(top2_indices, start=1):
-        name = channel_names[idx] if idx < len(channel_names) else f"CH{idx}"
-        print(f"  {rank}. {name:<20} {contributions_pc2[idx]:5.1f}%")
-    print()
-
-
 # ---------------------------------------------------------------------------
 # 3D Interactive PCA helpers (Plotly)
 # ---------------------------------------------------------------------------
@@ -2381,6 +2778,8 @@ def plot_pca_3d_scatter(
     width: int = 900,
     height: int = 700,
     title: str = "",
+    show_loadings: bool = True,
+    loadings_top_n: int = 5,
 ) -> object:
     """
     Draw an interactive 3D PCA scatter plot with mouse rotation and hover tooltips.
@@ -2410,10 +2809,18 @@ def plot_pca_3d_scatter(
         marker_opacity: Dot transparency, 0 (invisible) to 1 (opaque) (default: 0.6).
         width: Figure width in pixels (default: 900).
         height: Figure height in pixels (default: 700).
+        show_loadings: When True (default), draw a loadings panel in the
+                       right-hand column, below the legend: for each displayed
+                       PC (pc_x, pc_y, pc_z) its explained variance and its
+                       loadings_top_n channels ranked by % contribution
+                       (loading² × 100, ADR-016). The panel is printed to the
+                       console either way, with the loadings method.
+        loadings_top_n: Channels listed per PC in the loadings panel (default 5).
 
     Returns:
         go.Figure: A Plotly Figure. Call figure.show() to display it in a notebook.
     """
+    _validate_loadings_panel_arguments(loadings_top_n)
     go = _import_plotly()
     _require_pca_computed(anndata_object)
 
@@ -2549,6 +2956,11 @@ def plot_pca_3d_scatter(
         f"axes=PC{pc_x}/PC{pc_y}/PC{pc_z} | "
         f"{len(unique_groups)} groups | {len(plot_df):,} events plotted"
     )
+    loadings_panel_text = _prepare_loadings_panel(
+        anndata_object, "plot_pca_3d_scatter", loadings_top_n, [pc_x - 1, pc_y - 1, pc_z - 1],
+    )
+    if show_loadings:
+        _add_loadings_panel_to_plotly_figure(figure, loadings_panel_text)
     return figure
 
 
@@ -2563,6 +2975,8 @@ def plot_pca_3d_biplot(
     width: int = 900,
     height: int = 700,
     title: str = "",
+    show_loadings: bool = True,
+    loadings_top_n: int = 5,
 ) -> object:
     """
     Draw an interactive 3D PCA biplot: group centroids and channel loading arrows.
@@ -2588,10 +3002,18 @@ def plot_pca_3d_biplot(
         pc_z: 1-based index of the PC to place on the Z axis (default: 3).
         width: Figure width in pixels (default: 900).
         height: Figure height in pixels (default: 700).
+        show_loadings: When True (default), draw a loadings panel in the
+                       right-hand column, below the legend: for each displayed
+                       PC (pc_x, pc_y, pc_z) its explained variance and its
+                       loadings_top_n channels ranked by % contribution
+                       (loading² × 100, ADR-016). The panel is printed to the
+                       console either way, with the loadings method.
+        loadings_top_n: Channels listed per PC in the loadings panel (default 5).
 
     Returns:
         go.Figure: A Plotly Figure. Call figure.show() to display it in a notebook.
     """
+    _validate_loadings_panel_arguments(loadings_top_n)
     go = _import_plotly()
     _require_pca_computed(anndata_object)
 
@@ -2666,9 +3088,9 @@ def plot_pca_3d_biplot(
     scaled_top_loading_vectors = top_loading_vectors * scale
     scaled_centroid_matrix = centroid_matrix * scale
 
-    # Print top channels.
-    print(f"\nTop {top_n_variables} channels by 3D loading magnitude "
-          f"(PC{pc_x}/PC{pc_y}/PC{pc_z}):")
+    # Print top channels (the arrows drawn).
+    print(f"\nArrows: top {top_n_variables} channels by 3D loading magnitude "
+          f"sqrt(loading_PC{pc_x}² + loading_PC{pc_y}² + loading_PC{pc_z}²):")
     for rank, idx in enumerate(top_indices, start=1):
         name = channel_names[int(idx)] if int(idx) < len(channel_names) else f"CH{idx}"
         print(f"  {rank}. {name:<20} magnitude={loading_magnitudes[idx]:.3f}")
@@ -2764,6 +3186,11 @@ def plot_pca_3d_biplot(
         f"axes=PC{pc_x}/PC{pc_y}/PC{pc_z} | "
         f"{len(unique_groups)} groups | {top_n_variables} loading arrows"
     )
+    loadings_panel_text = _prepare_loadings_panel(
+        anndata_object, "plot_pca_3d_biplot", loadings_top_n, [pc_x - 1, pc_y - 1, pc_z - 1],
+    )
+    if show_loadings:
+        _add_loadings_panel_to_plotly_figure(figure, loadings_panel_text)
     return figure
 
 
@@ -2780,6 +3207,8 @@ def plot_pca_3d_trajectory(
     width: int = 900,
     height: int = 700,
     title: str = "",
+    show_loadings: bool = True,
+    loadings_top_n: int = 5,
 ) -> object:
     """
     Draw an interactive 3D PCA trajectory plot showing condition centroids over time.
@@ -2807,10 +3236,18 @@ def plot_pca_3d_trajectory(
         pc_z: 1-based index of the PC to place on the Z axis (default: 3).
         width: Figure width in pixels (default: 900).
         height: Figure height in pixels (default: 700).
+        show_loadings: When True (default), draw a loadings panel in the
+                       right-hand column, below the legend: for each displayed
+                       PC (pc_x, pc_y, pc_z) its explained variance and its
+                       loadings_top_n channels ranked by % contribution
+                       (loading² × 100, ADR-016). The panel is printed to the
+                       console either way, with the loadings method.
+        loadings_top_n: Channels listed per PC in the loadings panel (default 5).
 
     Returns:
         go.Figure: A Plotly Figure. Call figure.show() to display it in a notebook.
     """
+    _validate_loadings_panel_arguments(loadings_top_n)
     go = _import_plotly()
     _require_pca_computed(anndata_object)
 
@@ -2981,4 +3418,14 @@ def plot_pca_3d_trajectory(
         f"[plot_pca_3d_trajectory] condition='{condition_column}' | "
         f"time='{time_column}' | axes=PC{pc_x}/PC{pc_y}/PC{pc_z}"
     )
+    if show_loading_arrows:
+        print(
+            f"[plot_pca_3d_trajectory] Arrows: top {top_n_variables} channels by 3D loading "
+            f"magnitude sqrt(loading_PC{pc_x}² + loading_PC{pc_y}² + loading_PC{pc_z}²)."
+        )
+    loadings_panel_text = _prepare_loadings_panel(
+        anndata_object, "plot_pca_3d_trajectory", loadings_top_n, [pc_x - 1, pc_y - 1, pc_z - 1],
+    )
+    if show_loadings:
+        _add_loadings_panel_to_plotly_figure(figure, loadings_panel_text)
     return figure

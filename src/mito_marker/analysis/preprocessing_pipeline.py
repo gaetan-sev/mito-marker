@@ -322,6 +322,7 @@ def _apply_feature_selection(
         _METHOD_HIGH_VARIANCE,
         _METHOD_MIM,
         _METHOD_PCA_LOADINGS,
+        _PCA_LOADINGS_SCORE_FORMULA_TEXT,
         _ensure_analysis_config,
         _get_active_data_matrix,
         _get_analytical_mask,
@@ -449,6 +450,7 @@ def _apply_feature_selection(
         elif method_name == _METHOD_HIGH_VARIANCE:
             pool_scores = _score_high_variance(pool_matrix)
         elif method_name == _METHOD_PCA_LOADINGS:
+            print(f"  {_PCA_LOADINGS_SCORE_FORMULA_TEXT}")
             pool_scores = _score_pca_loadings(pool_matrix, n_pool)
         else:
             raise ValueError(f"Unknown feature selection method: '{method_name}'")

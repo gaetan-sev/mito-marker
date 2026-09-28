@@ -91,7 +91,9 @@ from sklearn.preprocessing import StandardScaler
 
 from mito_marker.analysis.colors import sort_values_for_legend
 from mito_marker.analysis.pca_plot import (
+    _LOADING_CONTRIBUTION_FORMULA_TEXT,
     _build_color_map,
+    _compute_loading_contributions,
     _get_group_labels,
 )
 from mito_marker.analysis.selection import _get_subject_column
@@ -424,9 +426,9 @@ def _print_pca_loadings(
     Print the top contributing features for PC1 and PC2.
 
     For each principal component, display each feature's raw loading value and
-    its relative contribution (|loading| / sum(|loadings|) × 100).  A high
-    contribution means that feature strongly drives the variance captured by
-    that axis.
+    its % contribution (loading² × 100, FactoMineR / factoextra convention,
+    ADR-016; contributions of all features sum to 100% on each PC).  A high
+    contribution means that feature strongly drives the direction of that axis.
 
     Arguments:
         pca: Fitted sklearn PCA object.
@@ -434,12 +436,17 @@ def _print_pca_loadings(
         top_n: Number of top features to display per component (default 10).
     """
     loadings_matrix = pca.components_.T  # shape (n_features, n_components)
+    contributions_matrix = _compute_loading_contributions(loadings_matrix)
+    print(
+        "\n[AMHI] Loadings: unit-norm eigenvectors of the covariance matrix "
+        "of the standardized features (standard sklearn PCA, AMHI reference space)."
+    )
+    print(f"[AMHI] {_LOADING_CONTRIBUTION_FORMULA_TEXT}")
     n_pcs_to_show = min(2, pca.n_components_)
     for pc_idx in range(n_pcs_to_show):
         pc_loadings = loadings_matrix[:, pc_idx]
         var_pct = float(pca.explained_variance_ratio_[pc_idx]) * 100
-        abs_loadings = np.abs(pc_loadings)
-        contributions = abs_loadings / abs_loadings.sum() * 100
+        contributions = contributions_matrix[:, pc_idx]
         sorted_idx = np.argsort(contributions)[::-1][:top_n]
         print(
             f"\n[AMHI] PC{pc_idx + 1} ({var_pct:.1f}% variance) "
