@@ -37,14 +37,17 @@ from mito_marker.analysis.pca_plot import (
     _build_loadings_panel_text,
     _compute_loading_contributions,
     _compute_nested_equal_weights,
+    _compute_total_contributions,
     _get_data_and_channels,
     _get_group_labels,
+    _print_loadings_method,
     compute_pca,
     get_top_loading_channels,
     plot_pca_3d_biplot,
     plot_pca_3d_scatter,
     plot_pca_3d_trajectory,
     plot_pca_biplot,
+    plot_pca_loadings_bar,
     plot_pca_scatter,
     plot_pca_trajectory,
 )
@@ -431,13 +434,25 @@ class TestPlotPcaScatter:
 
 
 class TestLoadingsPanel:
-    """Tests for _compute_loading_contributions() and _build_loadings_panel_text()."""
+    """Tests for the loadings contribution helpers and the panel text (ADR-016)."""
 
     def test_contributions_sum_to_100_per_component(self, test_anndata):
         # All components kept → loadings are a full orthonormal basis.
         compute_pca(test_anndata, n_components=N_VARS)
         contributions = _compute_loading_contributions(test_anndata.uns[_PCA_LOADINGS_KEY])
         np.testing.assert_allclose(contributions.sum(axis=0), 100.0, atol=1e-3)
+
+    def test_contributions_are_squared_loadings(self):
+        loadings_matrix = np.array([[0.8], [-0.6]])
+        np.testing.assert_allclose(
+            _compute_loading_contributions(loadings_matrix)[:, 0], [64.0, 36.0]
+        )
+
+    def test_total_contributions_weighted_by_variance(self):
+        # Channel 0 carries all of PC1 (75% variance), channel 1 all of PC2 (25%).
+        contributions = np.array([[100.0, 0.0], [0.0, 100.0]])
+        totals = _compute_total_contributions(contributions, np.array([0.75, 0.25]))
+        np.testing.assert_allclose(totals, [75.0, 25.0])
 
     def test_panel_lists_top_channels_in_order_with_sign(self):
         channel_names = ["Area", "Perimeter", "Circularity", "AR"]
@@ -448,23 +463,158 @@ class TestLoadingsPanel:
             [0.0, 0.0],
         ])
         panel_text = _build_loadings_panel_text(
-            channel_names, loadings_matrix, np.array([0.6, 0.3]), top_n=2, n_components=3,
+            channel_names, loadings_matrix, np.array([0.6, 0.3]), top_n=2, pc_indices=[0, 1, 2],
         )
         lines = panel_text.splitlines()
         pc1_line = lines.index("PC1 — 60.0% of variance")
         assert lines[pc1_line + 1].split() == ["+", "Area", "64.0%"]
         assert lines[pc1_line + 2].split() == ["-", "Perimeter", "36.0%"]
-        # n_components=3 is capped at the 2 components available.
+        # PC3 is skipped: only 2 components are available.
         assert "PC2 — 30.0% of variance" in lines
         assert "PC3" not in panel_text
+
+    def test_panel_follows_requested_pc_order(self):
+        loadings_matrix = np.eye(4)
+        panel_text = _build_loadings_panel_text(
+            ["A", "B", "C", "D"], loadings_matrix, np.full(4, 0.25), top_n=1, pc_indices=[3, 0],
+        )
+        assert panel_text.index("PC4") < panel_text.index("PC1")
+        assert "PC2" not in panel_text
 
     def test_panel_truncates_long_channel_names(self):
         long_name = "Cristae_Density_Per_Area_Unit_Long_Name"
         panel_text = _build_loadings_panel_text(
-            [long_name], np.array([[1.0]]), np.array([1.0]), top_n=5, n_components=3,
+            [long_name], np.array([[1.0]]), np.array([1.0]), top_n=5, pc_indices=[0, 1, 2],
         )
         assert long_name not in panel_text
         assert long_name[:10] in panel_text
+
+    def test_method_printed_for_standard_pca(self, test_anndata_with_pca, capsys):
+        _print_loadings_method(test_anndata_with_pca, "some_plot")
+        output = capsys.readouterr().out
+        assert "standard PCA" in output
+        assert "loading_jk² × 100" in output
+
+    def test_method_printed_for_weighted_pca(self, capsys):
+        adata = _make_weighted_pca_test_anndata()
+        compute_pca(adata, n_components=3, weight_by=["specie"])
+        capsys.readouterr()
+        _print_loadings_method(adata, "some_plot")
+        output = capsys.readouterr().out
+        assert "weighted PCA, weight_by=['specie']" in output
+
+
+class TestLoadingsPanelOnAllPlots:
+    """The loadings panel and the method line appear on every PCA plot."""
+
+    @staticmethod
+    def _matplotlib_panel_texts() -> list:
+        import matplotlib.pyplot as plt
+        return [
+            child.get_text()
+            for child in plt.gcf().axes[0].texts
+            if "PCA loadings" in child.get_text()
+        ]
+
+    @staticmethod
+    def _plotly_panel_texts(figure) -> list:
+        return [
+            annotation.text
+            for annotation in figure.layout.annotations
+            if "PCA" in annotation.text and "loadings" in annotation.text
+        ]
+
+    def test_biplot_panel_and_method(self, test_anndata_with_pca, capsys):
+        import matplotlib.pyplot as plt
+        plot_pca_biplot(test_anndata_with_pca, group_by="dilution")
+        panel_texts = self._matplotlib_panel_texts()
+        plt.close("all")
+        assert len(panel_texts) == 1
+        assert "loading_jk² × 100" in capsys.readouterr().out
+
+    def test_biplot_panel_hidden_when_disabled(self, test_anndata_with_pca):
+        import matplotlib.pyplot as plt
+        plot_pca_biplot(test_anndata_with_pca, group_by="dilution", show_loadings=False)
+        panel_texts = self._matplotlib_panel_texts()
+        plt.close("all")
+        assert panel_texts == []
+
+    def test_trajectory_panel_and_method(self, trajectory_anndata_with_pca, capsys):
+        import matplotlib.pyplot as plt
+        plot_pca_trajectory(trajectory_anndata_with_pca, condition_column="diet", time_column="age")
+        panel_texts = self._matplotlib_panel_texts()
+        plt.close("all")
+        assert len(panel_texts) == 1
+        assert "loading_jk² × 100" in capsys.readouterr().out
+
+    def test_many_groups_legend_below_x_axis_label(self, test_anndata_with_pca):
+        # With > 15 groups the legend goes below the plot and must not cover the x-axis label.
+        import matplotlib.pyplot as plt
+        test_anndata_with_pca.obs["many_groups"] = [f"G{i % 20:02d}" for i in range(N_OBS)]
+        plot_pca_scatter(test_anndata_with_pca, group_by="many_groups")
+        figure = plt.gcf()
+        figure.canvas.draw()
+        renderer = figure.canvas.get_renderer()
+        axis = figure.axes[0]
+        legend_top = axis.get_legend().get_window_extent(renderer).y1
+        x_label_bottom = axis.xaxis.label.get_window_extent(renderer).y0
+        plt.close("all")
+        assert legend_top < x_label_bottom
+
+    def test_3d_scatter_panel(self, test_anndata_with_pca):
+        figure = plot_pca_3d_scatter(test_anndata_with_pca, group_by="dilution")
+        assert len(self._plotly_panel_texts(figure)) == 1
+
+    def test_3d_scatter_panel_hidden_when_disabled(self, test_anndata_with_pca):
+        figure = plot_pca_3d_scatter(
+            test_anndata_with_pca, group_by="dilution", show_loadings=False
+        )
+        assert self._plotly_panel_texts(figure) == []
+
+    def test_3d_biplot_panel_lists_displayed_pcs(self, test_anndata_with_pca):
+        figure = plot_pca_3d_biplot(test_anndata_with_pca, group_by="dilution", pc_z=4)
+        panel_text = self._plotly_panel_texts(figure)[0]
+        assert "PC4" in panel_text
+        assert "PC3" not in panel_text
+
+    def test_3d_trajectory_panel(self, trajectory_anndata_with_pca):
+        figure = plot_pca_3d_trajectory(
+            trajectory_anndata_with_pca, condition_column="diet", time_column="age"
+        )
+        assert len(self._plotly_panel_texts(figure)) == 1
+
+    def test_3d_many_groups_moves_legend_below(self, test_anndata_with_pca):
+        test_anndata_with_pca.obs["many_groups"] = [f"G{i % 30:02d}" for i in range(N_OBS)]
+        figure = plot_pca_3d_scatter(test_anndata_with_pca, group_by="many_groups")
+        assert figure.layout.legend.orientation == "h"
+        assert len(self._plotly_panel_texts(figure)) == 1
+
+    def test_3d_invalid_loadings_top_n_raises(self, test_anndata_with_pca):
+        with pytest.raises(ValueError, match="loadings_top_n must be at least 1"):
+            plot_pca_3d_scatter(test_anndata_with_pca, group_by="dilution", loadings_top_n=0)
+
+
+class TestPlotPcaLoadingsBar:
+    """plot_pca_loadings_bar() uses the same contribution formula as the panels (ADR-016)."""
+
+    def test_console_shows_squared_loading_contributions(self, test_anndata_with_pca, capsys):
+        import matplotlib.pyplot as plt
+        plot_pca_loadings_bar(test_anndata_with_pca, top_n=3, n_components=2)
+        plt.close("all")
+        output = capsys.readouterr().out
+        loadings_pc1 = test_anndata_with_pca.uns[_PCA_LOADINGS_KEY][:, 0].astype(np.float64)
+        top_contribution = float(np.max(loadings_pc1 ** 2) * 100)
+        assert f"{top_contribution:5.1f}%" in output
+        assert "loading_jk² × 100" in output
+        assert "variance-weighted" in output
+
+    def test_bar_chart_x_label(self, test_anndata_with_pca):
+        import matplotlib.pyplot as plt
+        plot_pca_loadings_bar(test_anndata_with_pca, top_n=3, n_components=2)
+        bar_figure = plt.figure(plt.get_fignums()[-2])
+        x_label = bar_figure.axes[0].get_xlabel()
+        plt.close("all")
+        assert x_label == "% contribution (loading² × 100)"
 
 
 # ---------------------------------------------------------------------------

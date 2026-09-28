@@ -3,7 +3,7 @@ title: Glossary
 status: draft
 owner: gaetan
 created: 2026-04-28
-updated: 2026-09-23
+updated: 2026-09-28
 tags: [glossary, terminology, acronyms]
 related: [docs/PROJECT.md, docs/DECISIONS.md]
 priority: P2
@@ -287,6 +287,14 @@ within-individual tracking is required to observe transitions.
 ---
 
 ## Statistical concepts specific to this project
+
+### PCA loading contribution
+
+Share of a principal component carried by one feature: loading² × 100, where
+the loading is the feature's coefficient in the unit-norm eigenvector. Sums to
+100% over all features on each PC. Over several PCs, contributions are averaged
+weighted by each PC's explained variance. Shown in the loadings panel of every
+PCA plot. See ADR-016.
 
 ### Per-individual aggregation
 

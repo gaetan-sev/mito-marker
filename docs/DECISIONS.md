@@ -3,7 +3,7 @@ title: Architecture Decision Records
 status: draft
 owner: gaetan
 created: 2026-04-28
-updated: 2026-09-23
+updated: 2026-09-28
 tags: [decisions, ADR, architecture, methodology]
 related: [docs/PROJECT.md, docs/GLOSSARY.md]
 priority: P1
@@ -743,6 +743,65 @@ difference the comparison is looking for.
 - The per-subject fraction option (`within_group`) makes
   `pct_of_total_population` redundant (= `pct_of_subset × fraction`); it is
   informative only for absolute-threshold subsets.
+
+---
+
+## ADR-016 — PCA loading contribution = squared loading (FactoMineR / factoextra convention)
+
+**Date**: 2026-09-28
+**Status**: accepted
+
+**Context**: The package reported "% contribution of a feature to a PC" with
+two different formulas. `plot_pca_loadings_bar()` and the AMHI console used
+|loading| / Σ|loadings| × 100; `plot_pca_biplot()` and `plot_pca_trajectory()`
+printed loading² × 100. For the same feature and the same PC the two numbers
+differ widely (synthetic 11-feature example: 56.7% vs 31.9% for the top
+feature of a PC; the top 5 features sum to 96% vs 80%). The ranking of
+features within one PC is identical (both are increasing functions of
+|loading|), but the values, and any ranking of totals across several PCs,
+are not. The new loadings panel on every PCA plot needed one formula.
+
+**Decision**:
+1. **Contribution of feature j to PC k = loading_jk² × 100**, where the
+   loadings are the unit-norm eigenvectors stored in `.uns['pca_loadings']`.
+   On each PC the contributions of all features sum to 100%. This is the
+   definition of FactoMineR (`PCA()$var$contrib`) and factoextra
+   (`fviz_contrib()`), the most used PCA toolkits in the life sciences, and of
+   Abdi & Williams (2010, *WIREs Comput Stat* 2:433): since the squared
+   coefficients of a unit eigenvector sum to 1, each squared coefficient is
+   the share of the axis carried by that variable. On standardized data it is
+   also the share of the PC's variance attributable to the variable.
+2. **Total contribution over several PCs is weighted by their variance**:
+   Σ_k(contribution_jk × variance_k) / Σ_k variance_k — factoextra's
+   `fviz_contrib(axes = 1:n)`. A PC that explains little variance weighs
+   little, and totals still sum to 100%.
+3. **Every function that shows loadings states the method in the console**:
+   standard or weighted PCA (ADR-011), input layer, and this formula.
+4. Implemented once in `pca_plot._compute_loading_contributions()` and
+   `_compute_total_contributions()`; used by the loadings panel of all PCA
+   plots, `plot_pca_loadings_bar()` and the AMHI console.
+
+**Alternatives considered**:
+- |loading| / Σ|loadings| × 100 (previous `plot_pca_loadings_bar()`): no
+  variance or geometric interpretation; it compresses differences (a dominant
+  feature looks smaller, negligible features look larger). Not used by any
+  reference library.
+- Raw signed loadings only (scanpy `pl.pca_loadings`, Bioconductor PCAtools
+  `plotloadings`): keeps the sign but is not a percentage, which is what the
+  panels are meant to show. The sign is kept in the panel as "+"/"-".
+- Unweighted sum of contributions across PCs (previous cross-component
+  "Total"): lets a low-variance PC count as much as PC1; totals range 0–n×100%.
+
+**Consequences**:
+- `plot_pca_loadings_bar()` and the AMHI console print different percentages
+  than before; the ranking of features within a PC does not change, the
+  cross-component total and its ordering may. Figures produced before this
+  ADR are not comparable number-for-number.
+- The `PCALoadings` feature-selection score (`_score_pca_loadings`,
+  Σ_k variance_ratio_k × |loading_jk|) is a ranking score, not a percentage,
+  and is left unchanged so that feature selections already run stay
+  reproducible; the console now prints its formula. Aligning it on squared
+  loadings would change which features are selected and needs its own decision.
 
 ---
 

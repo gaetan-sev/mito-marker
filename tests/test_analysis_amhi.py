@@ -86,6 +86,7 @@ from mito_marker.analysis.amhi import (
     _auto_select_pca_components,
     _exclude_reference_rows,
     _load_reference_transforms,
+    _print_pca_loadings,
     _project_into_reference_space,
     compute_all_mito_mean,
     compute_amhi,
@@ -995,3 +996,21 @@ class TestPlotAmhiProfile:
         adata = _make_amhi_anndata()
         with pytest.raises(ValueError, match="Run compute_all_mito_mean"):
             plot_amhi_profile(adata)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# _print_pca_loadings — contribution formula (ADR-016)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestPrintPcaLoadings:
+    """AMHI prints loading contributions as loading² × 100, like the PCA plots."""
+
+    def test_contributions_are_squared_loadings(self, capsys) -> None:
+        rng = np.random.default_rng(3)
+        pca = SklearnPCA(n_components=2, random_state=0).fit(rng.normal(size=(50, 4)))
+        _print_pca_loadings(pca, ["F0", "F1", "F2", "F3"], top_n=4)
+        output = capsys.readouterr().out
+        top_contribution = float(np.max(pca.components_[0] ** 2) * 100)
+        assert f"{top_contribution:.1f}%" in output
+        assert "loading_jk² × 100" in output

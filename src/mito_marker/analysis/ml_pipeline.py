@@ -76,6 +76,7 @@ from sklearn.svm import SVC, SVR
 
 from mito_marker.analysis._gpu_utils import is_cuml_available
 from mito_marker.analysis.feature_selection import (
+    _PCA_LOADINGS_SCORE_FORMULA_TEXT,
     _get_active_data_matrix,
     _score_cmi,
     _score_corr_filter,
@@ -338,6 +339,8 @@ def run_ml_analysis(
     if strategy == "Bags" and bag_fs_methods:
         print()
         print(f"  Post-bag feature selection: {' → '.join(bag_fs_methods)} …")
+        if "PCALoadings" in bag_fs_methods:
+            print(f"  {_PCA_LOADINGS_SCORE_FORMULA_TEXT}")
         print(f"  Features before: {data_matrix.shape[1]}")
         data_matrix, feature_names = _select_bag_features_pipeline(
             bag_matrix=data_matrix,
