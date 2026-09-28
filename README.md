@@ -1042,7 +1042,7 @@ from google.colab import userdata
 github_token = userdata.get("GITHUB_TOKEN")
 
 # Install a release tag (see CHANGELOG.md for the latest one)
-!pip install git+https://{github_token}@github.com/gaetan-sev/mito-marker.git@v0.2.0
+!pip install git+https://{github_token}@github.com/gaetan-sev/mito-marker.git@v0.2.1
 
 # SFC ingestion
 from mito_marker import ingest_sfc_folder
