@@ -38,6 +38,7 @@ import matplotlib.figure
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.legend import Legend
 from matplotlib.patches import Ellipse, Polygon
 from scipy.spatial import ConvexHull, QhullError
 from scipy.stats import chi2
@@ -451,6 +452,9 @@ def plot_pca_scatter(
     show_centroid_cross: bool = False,
     show_individual_centroids: bool = False,
     nest_aggregate_by: Optional[str] = None,
+    show_loadings: bool = True,
+    loadings_top_n: int = 5,
+    loadings_n_components: int = 3,
 ) -> None:
     """
     Draw a PCA scatter plot (PC1 vs PC2) with group centroids marked.
@@ -507,6 +511,18 @@ def plot_pca_scatter(
         connected by a straight line; a single individual is left as a lone
         disc.
 
+    Loadings panel (show_loadings=True, default):
+        The right-hand column, below the color legend, lists the first
+        loadings_n_components PCs with their explained variance, and for each
+        PC its loadings_top_n channels ranked by % contribution to that axis.
+        Contribution of channel j to PC k = loading[j, k]² × 100 (standard
+        FactoMineR / factoextra definition; the contributions of all channels
+        sum to 100% on each PC). The "+" / "-" before a channel is the sign of
+        its loading: the side of the axis toward which the channel increases.
+        The same panel is printed to the console. When the legend is moved
+        below the plot (more than 15 groups), the panel sits alone in the
+        right-hand column.
+
     Arguments:
         anndata_object: AnnData with .obsm['X_pca'] populated by compute_pca().
         group_by: Name of the .obs column to color by (e.g. "subject_ID"), or
@@ -562,10 +578,22 @@ def plot_pca_scatter(
         nest_aggregate_by: Name of the .obs column identifying each individual
                        within a group (e.g. "subject_ID"). Required when
                        show_individual_centroids=True; ignored otherwise.
+        show_loadings: When True (default), draw the loadings panel described
+                       above. Set to False for the plot and legend only.
+        loadings_top_n: Number of channels listed per PC in the loadings panel
+                        (default 5, capped at the number of channels).
+        loadings_n_components: Number of PCs listed in the loadings panel
+                               (default 3, capped at the number of PCs computed).
 
     Returns:
         None. The figure is displayed via plt.show().
     """
+    if loadings_top_n < 1 or loadings_n_components < 1:
+        raise ValueError(
+            "loadings_top_n and loadings_n_components must be at least 1, got "
+            f"loadings_top_n={loadings_top_n}, loadings_n_components={loadings_n_components}."
+        )
+
     # Resolve which limit to use: max_points_per_group takes priority;
     # fall back to n_events_per_group for backwards-compatible call sites.
     effective_max_points = max_points_per_group if max_points_per_group is not None else n_events_per_group
@@ -771,7 +799,21 @@ def plot_pca_scatter(
             f"{len(plot_df):,} events{weight_suffix}"
         )
     ax.set_title(title if title else auto_title, fontsize=13)
-    _apply_legend(ax, group_by_label, len(unique_groups))
+    legend = _apply_legend(ax, group_by_label, len(unique_groups))
+    if show_loadings:
+        loadings_panel_text = _build_loadings_panel_text(
+            channel_names=list(anndata_object.uns.get(_PCA_CHANNEL_NAMES_KEY, [])),
+            loadings_matrix=anndata_object.uns[_PCA_LOADINGS_KEY],
+            var_ratios=var_ratios,
+            top_n=loadings_top_n,
+            n_components=loadings_n_components,
+        )
+        print("[plot_pca_scatter] Loadings panel shown beside the plot:")
+        print(loadings_panel_text)
+        _draw_loadings_panel(
+            ax, legend, loadings_panel_text,
+            legend_is_beside_plot=len(unique_groups) <= _MANY_GROUPS_THRESHOLD,
+        )
     ax.grid(True, linestyle="--", alpha=0.3)
     fig.text(
         0.5, 0.01, get_run_context_footer_text(anndata_object),
@@ -1606,6 +1648,9 @@ def _build_cross_component_text_figure(
 
 _MANY_GROUPS_THRESHOLD = 15
 
+# Maximum characters of a channel name in the scatter's loadings panel.
+_LOADINGS_PANEL_NAME_WIDTH = 22
+
 
 def _compute_confidence_ellipse_params(
     x_values: np.ndarray,
@@ -1800,7 +1845,7 @@ def _draw_loading_arrows(
         )
 
 
-def _apply_legend(ax: plt.Axes, group_by: str, n_unique_groups: int) -> None:
+def _apply_legend(ax: plt.Axes, group_by: str, n_unique_groups: int) -> Legend:
     """
     Place the legend below the plot when there are many groups, to the right otherwise.
 
@@ -1812,18 +1857,129 @@ def _apply_legend(ax: plt.Axes, group_by: str, n_unique_groups: int) -> None:
         ax: The matplotlib Axes on which to add the legend.
         group_by: Label used as the legend title.
         n_unique_groups: Number of distinct groups — controls ncol and placement.
+
+    Returns:
+        The Legend artist, so other elements (e.g. the loadings panel) can be
+        anchored to it.
     """
     if n_unique_groups > _MANY_GROUPS_THRESHOLD:
         legend_ncol = max(1, ceil(n_unique_groups / _MANY_GROUPS_THRESHOLD))
-        ax.legend(
+        return ax.legend(
             loc="upper center",
             bbox_to_anchor=(0.5, -0.08),
             ncol=legend_ncol,
             fontsize=7,
             title=group_by,
         )
+    return ax.legend(title=group_by, bbox_to_anchor=(1.05, 1), loc="upper left")
+
+
+def _compute_loading_contributions(loadings_matrix: np.ndarray) -> np.ndarray:
+    """
+    Return the % contribution of every channel to every principal component.
+
+    Contribution of channel j to PC k = loading[j, k]² × 100. The stored
+    loadings are unit-norm eigenvectors, so on each PC the squared loadings
+    already sum to 1: the contributions of all channels sum to 100%. This is
+    the standard definition used by FactoMineR / factoextra (fviz_contrib),
+    and the one printed by plot_pca_biplot() and plot_pca_trajectory().
+
+    Arguments:
+        loadings_matrix: shape (n_channels, n_components), from
+                         .uns['pca_loadings'].
+
+    Returns:
+        Array of the same shape, in percent.
+    """
+    return np.asarray(loadings_matrix, dtype=np.float64) ** 2 * 100.0
+
+
+def _build_loadings_panel_text(
+    channel_names: List[str],
+    loadings_matrix: np.ndarray,
+    var_ratios: np.ndarray,
+    top_n: int,
+    n_components: int,
+) -> str:
+    """
+    Build the text of the loadings panel shown beside the PCA scatter.
+
+    For each of the first n_components PCs: a header with the PC's explained
+    variance, then its top_n channels ranked by % contribution. Each channel
+    line starts with the sign of its loading ("+" = the channel increases
+    along the positive direction of the axis, "-" = along the negative one).
+
+    Arguments:
+        channel_names: Ordered channel names, from .uns['pca_channel_names'].
+        loadings_matrix: shape (n_channels, n_components_fitted).
+        var_ratios: Explained variance ratio of each fitted PC.
+        top_n: Number of channels listed per PC (capped at n_channels).
+        n_components: Number of PCs listed (capped at the number fitted).
+
+    Returns:
+        Multi-line string, meant for a monospace font.
+    """
+    n_components = min(n_components, loadings_matrix.shape[1])
+    top_n = min(top_n, loadings_matrix.shape[0])
+    contributions = _compute_loading_contributions(loadings_matrix)
+
+    lines = [f"PCA loadings — top {top_n} features", "(% contribution to the axis)"]
+    for pc_index in range(n_components):
+        lines.append("")
+        lines.append(f"PC{pc_index + 1} — {float(var_ratios[pc_index]):.1%} of variance")
+        top_indices = np.argsort(contributions[:, pc_index])[::-1][:top_n]
+        for channel_index in top_indices:
+            channel_name = (
+                channel_names[channel_index]
+                if channel_index < len(channel_names)
+                else f"CH{channel_index}"
+            )
+            # Long SFC channel names would widen the panel and squeeze the plot.
+            if len(channel_name) > _LOADINGS_PANEL_NAME_WIDTH:
+                channel_name = channel_name[:_LOADINGS_PANEL_NAME_WIDTH - 1] + "…"
+            sign = "+" if loadings_matrix[channel_index, pc_index] >= 0 else "-"
+            lines.append(
+                f" {sign} {channel_name:<{_LOADINGS_PANEL_NAME_WIDTH}s} "
+                f"{contributions[channel_index, pc_index]:5.1f}%"
+            )
+    return "\n".join(lines)
+
+
+def _draw_loadings_panel(
+    ax: plt.Axes,
+    legend: Legend,
+    panel_text: str,
+    legend_is_beside_plot: bool,
+) -> None:
+    """
+    Draw the loadings panel in the right-hand column of the figure.
+
+    When the legend sits to the right of the plot, the panel is anchored just
+    below it, so it follows the legend whatever its height. When the legend
+    was moved below the plot (many groups), the right-hand column is free and
+    the panel starts at the top of it.
+
+    Arguments:
+        ax: The scatter Axes.
+        legend: The Legend returned by _apply_legend().
+        panel_text: Text from _build_loadings_panel_text().
+        legend_is_beside_plot: True when the legend is in the right-hand column.
+    """
+    panel_style = dict(
+        ha="left",
+        va="top",
+        fontfamily="monospace",
+        fontsize=8,
+        bbox=dict(boxstyle="round,pad=0.5", facecolor="white", edgecolor="lightgray"),
+    )
+    if legend_is_beside_plot:
+        # xy=(0, 0) in the legend's own coordinates is its lower-left corner.
+        ax.annotate(
+            panel_text, xy=(0, 0), xycoords=legend,
+            xytext=(0, -12), textcoords="offset points", **panel_style,
+        )
     else:
-        ax.legend(title=group_by, bbox_to_anchor=(1.05, 1), loc="upper left")
+        ax.annotate(panel_text, xy=(1.05, 1.0), xycoords="axes fraction", **panel_style)
 
 
 def _get_analytical_mask_for_channels(

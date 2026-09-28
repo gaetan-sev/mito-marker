@@ -34,6 +34,8 @@ from mito_marker.analysis.pca_plot import (
     _PCA_LOADINGS_KEY,
     _PCA_VAR_RATIO_KEY,
     _PCA_WEIGHT_BY_KEY,
+    _build_loadings_panel_text,
+    _compute_loading_contributions,
     _compute_nested_equal_weights,
     _get_data_and_channels,
     _get_group_labels,
@@ -382,6 +384,87 @@ class TestPlotPcaScatter:
         import matplotlib.pyplot as plt
         plot_pca_scatter(test_anndata_with_pca, group_by="dilution", n_events_per_group=5)
         plt.close("all")
+
+    @staticmethod
+    def _panel_texts(figure) -> list:
+        """Return the texts of the loadings-panel annotations drawn on the scatter Axes."""
+        return [
+            child.get_text()
+            for child in figure.axes[0].texts
+            if "PCA loadings" in child.get_text()
+        ]
+
+    def test_loadings_panel_drawn_by_default(self, test_anndata_with_pca):
+        import matplotlib.pyplot as plt
+        plot_pca_scatter(test_anndata_with_pca, group_by="dilution")
+        panel_texts = self._panel_texts(plt.gcf())
+        plt.close("all")
+        assert len(panel_texts) == 1
+        for pc_name in ["PC1", "PC2", "PC3"]:
+            assert pc_name in panel_texts[0]
+        assert "PC4" not in panel_texts[0]
+
+    def test_loadings_panel_hidden_when_disabled(self, test_anndata_with_pca):
+        import matplotlib.pyplot as plt
+        plot_pca_scatter(test_anndata_with_pca, group_by="dilution", show_loadings=False)
+        panel_texts = self._panel_texts(plt.gcf())
+        plt.close("all")
+        assert panel_texts == []
+
+    def test_loadings_panel_with_many_groups(self, test_anndata_with_pca):
+        # More than 15 groups moves the legend below the plot; the panel must still be drawn.
+        import matplotlib.pyplot as plt
+        test_anndata_with_pca.obs["many_groups"] = [f"G{i % 20:02d}" for i in range(N_OBS)]
+        plot_pca_scatter(test_anndata_with_pca, group_by="many_groups")
+        panel_texts = self._panel_texts(plt.gcf())
+        plt.close("all")
+        assert len(panel_texts) == 1
+
+    def test_invalid_loadings_top_n_raises(self, test_anndata_with_pca):
+        with pytest.raises(ValueError, match="at least 1"):
+            plot_pca_scatter(test_anndata_with_pca, group_by="dilution", loadings_top_n=0)
+
+
+# ---------------------------------------------------------------------------
+# Tests: loadings panel helpers
+# ---------------------------------------------------------------------------
+
+
+class TestLoadingsPanel:
+    """Tests for _compute_loading_contributions() and _build_loadings_panel_text()."""
+
+    def test_contributions_sum_to_100_per_component(self, test_anndata):
+        # All components kept → loadings are a full orthonormal basis.
+        compute_pca(test_anndata, n_components=N_VARS)
+        contributions = _compute_loading_contributions(test_anndata.uns[_PCA_LOADINGS_KEY])
+        np.testing.assert_allclose(contributions.sum(axis=0), 100.0, atol=1e-3)
+
+    def test_panel_lists_top_channels_in_order_with_sign(self):
+        channel_names = ["Area", "Perimeter", "Circularity", "AR"]
+        loadings_matrix = np.array([
+            [0.8, 0.0],
+            [-0.6, 0.0],
+            [0.0, 1.0],
+            [0.0, 0.0],
+        ])
+        panel_text = _build_loadings_panel_text(
+            channel_names, loadings_matrix, np.array([0.6, 0.3]), top_n=2, n_components=3,
+        )
+        lines = panel_text.splitlines()
+        pc1_line = lines.index("PC1 — 60.0% of variance")
+        assert lines[pc1_line + 1].split() == ["+", "Area", "64.0%"]
+        assert lines[pc1_line + 2].split() == ["-", "Perimeter", "36.0%"]
+        # n_components=3 is capped at the 2 components available.
+        assert "PC2 — 30.0% of variance" in lines
+        assert "PC3" not in panel_text
+
+    def test_panel_truncates_long_channel_names(self):
+        long_name = "Cristae_Density_Per_Area_Unit_Long_Name"
+        panel_text = _build_loadings_panel_text(
+            [long_name], np.array([[1.0]]), np.array([1.0]), top_n=5, n_components=3,
+        )
+        assert long_name not in panel_text
+        assert long_name[:10] in panel_text
 
 
 # ---------------------------------------------------------------------------

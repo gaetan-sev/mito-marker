@@ -6,6 +6,12 @@ Install a release with `pip install git+https://github.com/gaetan-sev/mito-marke
 
 ## [Unreleased]
 
+### Added
+- `plot_pca_scatter()` shows a PCA loadings panel below the color legend: for PC1–PC3
+  (with their explained variance), the top 5 features and their % contribution to the
+  axis (squared loading × 100). New parameters `show_loadings` (default `True`),
+  `loadings_top_n` (default 5) and `loadings_n_components` (default 3).
+
 ## [0.2.0] — 2026-09-27
 
 First release from this dedicated repository. The package code is the development
