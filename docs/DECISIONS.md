@@ -3,7 +3,7 @@ title: Architecture Decision Records
 status: draft
 owner: gaetan
 created: 2026-04-28
-updated: 2026-09-28
+updated: 2026-10-01
 tags: [decisions, ADR, architecture, methodology]
 related: [docs/PROJECT.md, docs/GLOSSARY.md]
 priority: P1
@@ -802,6 +802,43 @@ are not. The new loadings panel on every PCA plot needed one formula.
   and is left unchanged so that feature selections already run stay
   reproducible; the console now prints its formula. Aligning it on squared
   loadings would change which features are selected and needs its own decision.
+
+---
+
+## ADR-017 — TEM pixel scale: one constant in `controlled_vocabulary.py`
+
+**Date**: 2026-10-01
+**Status**: accepted
+
+**Context**: TEM length and area features (`Mito_Area`, `Mito_Perimeter`,
+`Mito_Feret_Diameter`...) are in pixels. Analyses that need physical sizes
+(absolute size gates, a cut in nm) had no recorded scale, so lab experiments
+hardcoded a provisional value of their own (mito-marker-lab, EXP-016 and
+EXP-020). The real scale is now known from the microscope metadata of the
+raw images.
+
+**Decision**:
+1. The pixel-to-nanometre scale of TEM images is declared once, as
+   `TEM_NANOMETRES_PER_PIXEL` in `controlled_vocabulary.py`, together with its
+   validity domain (camera, magnification, binning, frame size) and how it was
+   measured. That constant is the reference; this ADR does not restate its value.
+2. Every conversion to physical units, in the package and in the lab, imports
+   the constant. No scale is hardcoded anywhere else.
+3. Images acquired with another setup (magnification, binning, camera) or
+   exported at a reduced size get their own constant next to it, with the
+   same documentation; they never reuse this one.
+
+**Alternatives considered**:
+- Value written in the ADR: two places to keep in sync; the ADR records the
+  rule, the code holds the number.
+- A per-file `.obs` column read at ingestion: more general, but the TEM
+  `.txt` files do not carry the scale and the whole current dataset shares one
+  setup. To revisit if images from several setups have to be mixed.
+
+**Consequences**:
+- Physical sizes become comparable across experiments and species.
+- Lab experiments run with a provisional scale keep their results as
+  published; they are not updated retroactively.
 
 ---
 

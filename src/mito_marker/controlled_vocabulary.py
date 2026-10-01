@@ -285,6 +285,28 @@ TEM_NON_ANALYTICAL_FEATURES: list[str] = [
 ]
 
 # ---------------------------------------------------------------------------
+# TEM PIPELINE — physical scale of the images (ADR-017)
+#
+# Length features in the TEM files (Mito_Area, Mito_Perimeter,
+# Mito_Feret_Diameter, Mito_CentroidX/Y...) are in pixels. Multiply a length
+# by TEM_NANOMETRES_PER_PIXEL to get nanometres, an area by its square to get
+# nm². Never hardcode a scale elsewhere: import this constant.
+#
+# Valid for the raw images of the current TEM dataset (all species): AMT camera
+# NS12, Direct Mag x1200, Bin 1, 80 kV, 4112 x 3008 px micrograph area.
+# Source: TIFF tag 270 of the raw images, XpixCal = YpixCal = 176.916 px/µm,
+# i.e. 1000 / 176.916 = 5.652 nm/px (the microscope also prints
+# "Calibration: 0.005652 µm/pix"). Checked against the burned-in 2 µm scale
+# bar (353 px) and against the centroid ranges of every species' file, which
+# all fit inside the 4112 x 3008 frame (features were extracted at full
+# resolution, not on downscaled exports).
+# Images acquired at another magnification, binning or camera, or exported at
+# a reduced size, have a different scale: declare a separate constant.
+# ---------------------------------------------------------------------------
+
+TEM_NANOMETRES_PER_PIXEL: float = 5.652
+
+# ---------------------------------------------------------------------------
 # TEM PIPELINE — biological feature categories (single source of truth)
 #
 # TEM_FEATURE_SUBSETS groups every ANALYTICAL TEM feature into one of four

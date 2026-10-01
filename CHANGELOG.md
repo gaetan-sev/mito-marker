@@ -6,6 +6,11 @@ Install a release with `pip install git+https://github.com/gaetan-sev/mito-marke
 
 ## [Unreleased]
 
+### Added
+- `controlled_vocabulary.TEM_NANOMETRES_PER_PIXEL`: physical size of one pixel of the
+  raw TEM images (×1200, AMT NS12 camera), to convert pixel features into nanometres
+  (ADR-017).
+
 ## [0.2.1] — 2026-09-28
 
 PCA loadings panel on every PCA plot and a single loading contribution formula (ADR-016).

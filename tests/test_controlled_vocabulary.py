@@ -13,6 +13,7 @@ Tests validate the structure and content of every constant:
   - SFC_CHANNELS_TO_KEEP has exactly 144 unique non-FJComp entries.
   - SFC_CHANNELS_TO_EXCLUDE has exactly 64 entries all starting with "FJComp-".
   - The two channel lists are disjoint.
+  - TEM_NANOMETRES_PER_PIXEL matches the microscope calibration (ADR-017).
   - The assert-based validation pattern raises AssertionError for unknown values.
 """
 
@@ -37,6 +38,7 @@ from mito_marker.controlled_vocabulary import (
     PREFERRED_CONDITION_COLORS,
     SFC_CHANNELS_TO_EXCLUDE,
     SFC_CHANNELS_TO_KEEP,
+    TEM_NANOMETRES_PER_PIXEL,
 )
 
 _HEX_COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -158,6 +160,27 @@ class TestCellTypeOrderGonadStudy:
                 f"'{cell_type}' has no entry in PREFERRED_CONDITION_COLORS"
             )
             assert _HEX_COLOR_PATTERN.match(PREFERRED_CONDITION_COLORS[cell_type])
+
+
+# ---------------------------------------------------------------------------
+# TEM physical scale
+# ---------------------------------------------------------------------------
+
+
+class TestTemNanometresPerPixel:
+    """TEM_NANOMETRES_PER_PIXEL must match the microscope calibration of the
+    raw TEM images (ADR-017)."""
+
+    def test_is_a_float(self):
+        assert isinstance(TEM_NANOMETRES_PER_PIXEL, float)
+
+    def test_matches_tiff_calibration(self):
+        """The TIFF header gives 176.916 px/µm, i.e. 1000 / 176.916 nm/px."""
+        assert TEM_NANOMETRES_PER_PIXEL == pytest.approx(1000 / 176.916, abs=5e-4)
+
+    def test_matches_scale_bar(self):
+        """The burned-in 2 µm scale bar is 353 px long: within one pixel."""
+        assert 2000 / 354 <= TEM_NANOMETRES_PER_PIXEL <= 2000 / 352
 
 
 # ---------------------------------------------------------------------------
