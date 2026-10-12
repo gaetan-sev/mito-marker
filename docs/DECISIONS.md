@@ -805,6 +805,84 @@ are not. The new loadings panel on every PCA plot needed one formula.
 
 ---
 
+## ADR-018 — Default TEM feature exclusions: image-referenced and unvalidated features
+
+**Date**: 2026-10-12
+**Status**: accepted
+
+(ADR-017, TEM pixel scale, is on the unmerged branch `feat/tem-pixel-scale`.)
+
+**Context**: four TEM features produced artefacts in mito-marker-lab experiments
+and were excluded by hand, experiment by experiment:
+
+- `CristaeOrientation_Angle` is measured against the image frame and is
+  circular (0° = 180°). It split ZFish P1 at 23° vs 158°, with most images on
+  one side of 90° (EXP-031). It is still reported, with any value, when no
+  cristae orientation is found (EXP-032 step 5c). Like the centroid
+  coordinates, it describes the image, not the mitochondrion.
+- `Mito_MeanInt` carries a strong imaging and staining batch effect: KMeans on
+  ZFish P1 split whole animals by grey level (EXP-031). Six of the seven
+  processed TEM files hold per-image standardized grey levels and one holds raw
+  grey levels (EXP-032 step 5f). No normalization has been validated.
+- `Intensity_SD_percent` and `Intensity_SD_percent_CORR` are coefficients of
+  variation (SD / mean). They explode when the mean is close to 0, which is the
+  case for the standardized files and for every `_CORR` mean (EXP-032 step 5d).
+  The computation is not validated.
+
+**Decision**:
+
+- `controlled_vocabulary.py` lists the default exclusions in two constants,
+  one per reason:
+  - `TEM_IMAGE_REFERENCED_FEATURES`: `Mito_CentroidX/Y`, `Mito_FeretX/Y`,
+    `CristaeOrientation_Angle`. For spatial studies only.
+  - `TEM_UNVALIDATED_FEATURES`: `{feature: reason}` for `Mito_MeanInt`,
+    `Intensity_SD_percent`, `Intensity_SD_percent_CORR`. A feature leaves this
+    dict, through a new ADR, once its computation or normalization is
+    validated.
+- `TEM_NON_ANALYTICAL_FEATURES` is their union. It is still the list stamped
+  into `.var['is_non_analytical']`, so every analysis function excludes the
+  eight features with no change of its own.
+- `TEM_FEATURE_SUBSETS` (ADR-014) lists analysed features only. The four
+  features leave their categories, as the coordinates already did, and an
+  opted-in feature falls back to `Other`. The four categories of ADR-014 are
+  unchanged: Intensity keeps 9 features, Cristae Orientation keeps 3.
+- `refresh_tem_non_analytical_flags()` re-stamps the flag on an AnnData saved
+  by an older version. The flag is written at ingestion, so without this call
+  the `.h5ad` files already on disk would keep the four-feature list.
+- Opting a feature back in stays explicit:
+  `.var.loc[feature_name, "is_non_analytical"] = False`.
+
+**Alternatives considered**:
+
+- One list, with every excluded feature called non-analytical: rejected. It
+  hides why each feature is excluded. The unvalidated features are meant to
+  return once validated; the image-referenced ones are not.
+- A second `.var` column (for example `is_unvalidated`) read by every analysis
+  function: rejected. About ten modules each carry their own copy of the mask
+  helper, and all of them would need the change. The reason is already
+  recorded in `TEM_UNVALIDATED_FEATURES`.
+- Re-ingesting the processed `.h5ad` files: rejected as the only path. The
+  files live on Google Drive and are shared, so the refresh function is the
+  safe way to apply the default to any copy.
+- Encoding the angle as cos 2θ / sin 2θ: deferred. The angle stays relative
+  to the image frame, and it is undefined for the mitochondria where no
+  orientation is found.
+
+**Consequences**:
+
+- PCA, UMAP, radar, clustermap, feature selection and group comparison
+  analyse 20 TEM features by default instead of 24. Results produced before
+  this ADR are not comparable feature-for-feature.
+- `run_feature_subset_challenge(tem_anndata, TEM_FEATURE_SUBSETS)` compares
+  smaller Intensity and Cristae Orientation subsets.
+- Code that reads `TEM_FEATURE_SUBSETS["Intensity"]` to study these columns
+  must now name them explicitly.
+- Open: `Mito_MedianInt`, `Mito_TotalInt`, `Intensity_SD` and the `_CORR`
+  columns are standardized like `Mito_MeanInt` (EXP-032 step 5f). They remain
+  analysed by default until a decision is taken on them.
+
+---
+
 ## ADR-NNN — Template for future entries
 
 Copy and fill in for each new decision:

@@ -118,6 +118,73 @@ def build_tem_anndata(
     return tem_anndata
 
 
+def refresh_tem_non_analytical_flags(
+    tem_morphology_anndata: anndata.AnnData,
+) -> anndata.AnnData:
+    """
+    Re-stamp .var['is_non_analytical'] from the current TEM_NON_ANALYTICAL_FEATURES.
+
+    The flag is written once, at ingestion. An AnnData saved to .h5ad by an
+    older package version keeps the exclusion list of that version, so a
+    change of the default (ADR-018) would not reach it. Call this right after
+    anndata.read_h5ad() to apply the current default.
+
+    Every feature of .var is re-stamped, so a feature opted in by hand before
+    the call is excluded again. To analyse a non-analytical feature (e.g. a
+    spatial study), opt it in after the call:
+        tem_morphology_anndata.var.loc["CristaeOrientation_Angle", "is_non_analytical"] = False
+
+    Parameters
+    ----------
+    tem_morphology_anndata : anndata.AnnData
+        A TEM AnnData object (its .var index holds TEM feature names). It may
+        hold only a subset of TEM_FEATURE_COLUMNS. Modified in place.
+
+    Returns
+    -------
+    anndata.AnnData
+        The same object, with .var['is_non_analytical'] re-stamped.
+
+    Raises
+    ------
+    ValueError
+        If no .var name is a TEM feature column (not a TEM object).
+    """
+    feature_names = list(tem_morphology_anndata.var_names)
+    tem_feature_set = set(TEM_FEATURE_COLUMNS)
+    if not any(name in tem_feature_set for name in feature_names):
+        raise ValueError(
+            "refresh_tem_non_analytical_flags() expects a TEM AnnData object, but "
+            f"none of its {len(feature_names)} .var names is a TEM feature column. "
+            f"First names: {feature_names[:5]}"
+        )
+
+    non_analytical_set = set(TEM_NON_ANALYTICAL_FEATURES)
+    if "is_non_analytical" in tem_morphology_anndata.var.columns:
+        previous_flags = tem_morphology_anndata.var["is_non_analytical"].astype(bool)
+    else:
+        previous_flags = pd.Series(False, index=tem_morphology_anndata.var_names)
+    new_flags = pd.Series(
+        [name in non_analytical_set for name in feature_names],
+        index=tem_morphology_anndata.var_names,
+        dtype=bool,
+    )
+    tem_morphology_anndata.var["is_non_analytical"] = new_flags
+
+    # QC — what changed, and what the analysis will now use.
+    newly_excluded = [name for name in feature_names if new_flags[name] and not previous_flags[name]]
+    newly_included = [name for name in feature_names if previous_flags[name] and not new_flags[name]]
+    excluded_names = [name for name in feature_names if new_flags[name]]
+    print("[TEM flags] Re-stamped .var['is_non_analytical'] from TEM_NON_ANALYTICAL_FEATURES (ADR-018)")
+    print(f"  Observations: {tem_morphology_anndata.n_obs}, Variables: {tem_morphology_anndata.n_vars}")
+    print(f"  Excluded by default ({len(excluded_names)}): {excluded_names}")
+    print(f"  Newly excluded by this call ({len(newly_excluded)}): {newly_excluded}")
+    print(f"  Newly included by this call ({len(newly_included)}): {newly_included}")
+    print(f"  Analytical features left: {tem_morphology_anndata.n_vars - len(excluded_names)}")
+
+    return tem_morphology_anndata
+
+
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------

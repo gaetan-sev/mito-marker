@@ -13,6 +13,7 @@ Tests validate the structure and content of every constant:
   - SFC_CHANNELS_TO_KEEP has exactly 144 unique non-FJComp entries.
   - SFC_CHANNELS_TO_EXCLUDE has exactly 64 entries all starting with "FJComp-".
   - The two channel lists are disjoint.
+  - TEM default exclusions (ADR-018): image-referenced + unvalidated features.
   - The assert-based validation pattern raises AssertionError for unknown values.
 """
 
@@ -37,6 +38,10 @@ from mito_marker.controlled_vocabulary import (
     PREFERRED_CONDITION_COLORS,
     SFC_CHANNELS_TO_EXCLUDE,
     SFC_CHANNELS_TO_KEEP,
+    TEM_FEATURE_COLUMNS,
+    TEM_IMAGE_REFERENCED_FEATURES,
+    TEM_NON_ANALYTICAL_FEATURES,
+    TEM_UNVALIDATED_FEATURES,
 )
 
 _HEX_COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -348,6 +353,51 @@ class TestSfcChannelLists:
         assert len(overlap) == 0, (
             f"{len(overlap)} channel(s) appear in both keep and exclude lists: {overlap}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TEM default exclusions
+# ---------------------------------------------------------------------------
+
+
+class TestTemDefaultExclusions:
+    """ADR-018: features excluded from TEM analysis by default, one list per reason."""
+
+    def test_image_referenced_features_are_the_coordinates_and_the_cristae_angle(self):
+        assert TEM_IMAGE_REFERENCED_FEATURES == [
+            "Mito_CentroidX",
+            "Mito_CentroidY",
+            "Mito_FeretX",
+            "Mito_FeretY",
+            "CristaeOrientation_Angle",
+        ]
+
+    def test_unvalidated_features_are_the_three_intensity_columns(self):
+        assert set(TEM_UNVALIDATED_FEATURES) == {
+            "Mito_MeanInt",
+            "Intensity_SD_percent",
+            "Intensity_SD_percent_CORR",
+        }
+
+    def test_every_unvalidated_feature_states_its_reason(self):
+        for feature_name, reason in TEM_UNVALIDATED_FEATURES.items():
+            assert isinstance(reason, str) and len(reason) > 0, feature_name
+
+    def test_the_two_lists_are_disjoint(self):
+        assert set(TEM_IMAGE_REFERENCED_FEATURES).isdisjoint(TEM_UNVALIDATED_FEATURES)
+
+    def test_non_analytical_features_are_the_union_of_the_two_lists(self):
+        assert TEM_NON_ANALYTICAL_FEATURES == (
+            TEM_IMAGE_REFERENCED_FEATURES + list(TEM_UNVALIDATED_FEATURES)
+        )
+        assert len(TEM_NON_ANALYTICAL_FEATURES) == len(set(TEM_NON_ANALYTICAL_FEATURES))
+
+    def test_every_excluded_feature_is_a_tem_feature_column(self):
+        unknown = [name for name in TEM_NON_ANALYTICAL_FEATURES if name not in TEM_FEATURE_COLUMNS]
+        assert unknown == []
+
+    def test_twenty_features_are_analysed_by_default(self):
+        assert len(TEM_FEATURE_COLUMNS) - len(TEM_NON_ANALYTICAL_FEATURES) == 20
 
 
 # ---------------------------------------------------------------------------

@@ -102,7 +102,7 @@ def _get_analytical_mask(anndata_object: anndata.AnnData) -> np.ndarray:
         return ~anndata_object.var[_IS_NON_ANALYTICAL_COL].values.astype(bool)
 
     # Fallback: reconstruct the mask from both pipeline lists so that TEM
-    # non-analytical features (Mito_CentroidX/Y, Mito_FeretX/Y) are excluded
+    # non-analytical features (TEM_NON_ANALYTICAL_FEATURES) are excluded
     # from scoring just as reliably as SFC channels (Time, FlowAI).
     from mito_marker.controlled_vocabulary import (
         SFC_NON_ANALYTICAL_CHANNELS,

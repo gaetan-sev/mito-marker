@@ -6,6 +6,25 @@ Install a release with `pip install git+https://github.com/gaetan-sev/mito-marke
 
 ## [Unreleased]
 
+### Added
+- `refresh_tem_non_analytical_flags()` (exported from `mito_marker` and
+  `mito_marker.tem`) re-stamps `.var['is_non_analytical']` on a TEM AnnData
+  loaded from a `.h5ad` saved by an older version, so the current default
+  exclusions apply. It prints the features newly excluded or included.
+- `TEM_IMAGE_REFERENCED_FEATURES` and `TEM_UNVALIDATED_FEATURES` (with the
+  reason for each feature) in `controlled_vocabulary.py`.
+
+### Changed
+- **Breaking** (changed default): `CristaeOrientation_Angle`, `Mito_MeanInt`,
+  `Intensity_SD_percent` and `Intensity_SD_percent_CORR` are excluded from
+  analysis by default, like the centroid coordinates (ADR-018).
+  `TEM_NON_ANALYTICAL_FEATURES` lists 8 features instead of 4, and
+  `TEM_FEATURE_SUBSETS` no longer lists the four (Intensity: 9 features,
+  Cristae Orientation: 3). Migration: after `anndata.read_h5ad()`, call
+  `refresh_tem_non_analytical_flags()`. To analyse one of these features,
+  set `.var.loc[feature_name, "is_non_analytical"] = False`; code that read
+  them from `TEM_FEATURE_SUBSETS` must name them explicitly.
+
 ## [0.2.1] — 2026-09-28
 
 PCA loadings panel on every PCA plot and a single loading contribution formula (ADR-016).

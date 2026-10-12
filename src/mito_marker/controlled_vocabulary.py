@@ -267,22 +267,56 @@ TEM_FEATURE_COLUMNS: list[str] = [
     col for col in TEM_EXPECTED_FILE_COLUMNS if col not in _TEM_METADATA_COLUMNS
 ]
 
-# Features present in the raw TEM file that are stored in .X but carry no
-# morphological information relevant for condition comparison:
-#   - Mito_CentroidX/Y: spatial coordinates inside the image — depend on
-#     where the mitochondrion happens to sit in the TEM field of view, not
-#     on the biological condition.
+# Features present in the raw TEM file that are stored in .X but are excluded
+# from analysis by default (ADR-018). Two reasons, two lists:
+#
+# 1. Image-referenced features — they describe where the mitochondrion sits in
+#    the TEM field of view, or measure an angle against the image frame, not
+#    the mitochondrion itself. Used only in spatial studies.
+#   - Mito_CentroidX/Y: spatial coordinates inside the image.
 #   - Mito_FeretX/Y: anchor coordinates of the Feret diameter measurement —
 #     redundant with Mito_Feret_Diameter and equally location-dependent.
-# These are stamped as is_non_analytical=True in .var at ingestion time so
-# that all downstream analysis functions (PCA, UMAP, feature selection, radar)
-# automatically exclude them without requiring per-function drop_cols logic.
-TEM_NON_ANALYTICAL_FEATURES: list[str] = [
+#   - CristaeOrientation_Angle: measured against the image frame and circular
+#     (0° = 180°); undefined when no cristae orientation is found
+#     (mito-marker-lab, EXP-031 and EXP-032 step 5c).
+TEM_IMAGE_REFERENCED_FEATURES: list[str] = [
     "Mito_CentroidX",
     "Mito_CentroidY",
     "Mito_FeretX",
     "Mito_FeretY",
+    "CristaeOrientation_Angle",
 ]
+
+# 2. Unvalidated features — excluded until their computation or normalization
+#    is validated. Key = feature, value = why it is excluded. Remove a feature
+#    from this dict (with a new ADR) once it is validated.
+TEM_UNVALIDATED_FEATURES: dict[str, str] = {
+    "Mito_MeanInt": (
+        "Strong imaging/staining batch effect between animals and cohorts; "
+        "no validated intensity normalization yet (mito-marker-lab, EXP-031, "
+        "EXP-032 step 5f)."
+    ),
+    "Intensity_SD_percent": (
+        "Coefficient of variation (SD / mean): only meaningful on raw grey "
+        "levels, explodes on per-image standardized files whose mean is close "
+        "to 0 (mito-marker-lab, EXP-032 step 5d). Computation not validated."
+    ),
+    "Intensity_SD_percent_CORR": (
+        "Coefficient of variation computed on the _CORR mean, which is centred "
+        "on 0 in every file: explodes in all species (mito-marker-lab, EXP-032 "
+        "step 5d). Computation not validated."
+    ),
+}
+
+# Union of the two lists. Stamped as is_non_analytical=True in .var at
+# ingestion time (or by refresh_tem_non_analytical_flags() on an AnnData
+# saved by an older package version), so that all downstream analysis
+# functions (PCA, UMAP, feature selection, radar) automatically exclude them
+# without requiring per-function drop_cols logic. To use one of them (e.g. a
+# spatial study), set .var.loc[feature_name, "is_non_analytical"] = False.
+TEM_NON_ANALYTICAL_FEATURES: list[str] = (
+    TEM_IMAGE_REFERENCED_FEATURES + list(TEM_UNVALIDATED_FEATURES)
+)
 
 # ---------------------------------------------------------------------------
 # TEM PIPELINE — biological feature categories (single source of truth)
@@ -314,9 +348,10 @@ TEM_NON_ANALYTICAL_FEATURES: list[str] = [
 # They are kept apart because in a cross-species comparison absolute size and
 # outline shape are expected to behave very differently.
 #
-# Non-analytical spatial features (Mito_CentroidX/Y, Mito_FeretX/Y, listed in
-# TEM_NON_ANALYTICAL_FEATURES) are deliberately ABSENT — they are image
-# coordinates, not morphology, and must never be assigned a category.
+# Non-analytical features (TEM_NON_ANALYTICAL_FEATURES: the image-referenced
+# coordinates and cristae angle, and the unvalidated intensity features) are
+# deliberately ABSENT — every feature listed here is analysed by default
+# (ADR-018). An opted-in non-analytical feature falls back to "Other".
 #
 # Typical usage:
 #   from mito_marker.controlled_vocabulary import TEM_FEATURE_SUBSETS
@@ -339,8 +374,9 @@ TEM_FEATURE_SUBSETS: dict[str, list[str]] = {
     ],
     # Signal intensity and its distribution within the mitochondrion.
     # Corrected variants (_CORR) account for background fluorescence.
+    # Mito_MeanInt and both Intensity_SD_percent columns are excluded until
+    # validated (TEM_UNVALIDATED_FEATURES).
     "Intensity": [
-        "Mito_MeanInt",
         "Mito_MeanInt_CORR",
         "Mito_MedianInt",
         "Mito_MedianInt_CORR",
@@ -348,17 +384,15 @@ TEM_FEATURE_SUBSETS: dict[str, list[str]] = {
         "Mito_TotalInt_CORR",
         "Intensity_SD",
         "Intensity_SD_CORR",
-        "Intensity_SD_percent",
-        "Intensity_SD_percent_CORR",
         "Skewness",
         "Kurtosis",
     ],
     # Cristae (inner mitochondrial membrane folds) orientation parameters.
     # These capture the internal architecture of the mitochondrion.
+    # CristaeOrientation_Angle is image-referenced (TEM_IMAGE_REFERENCED_FEATURES).
     "Cristae Orientation": [
         "CristaeOrientation_Major",
         "CristaeOrientation_Minor",
-        "CristaeOrientation_Angle",
         "CristaeOrientation_Area",
     ],
 }
@@ -406,7 +440,7 @@ TEM_FEATURE_CATEGORY_COLORS: dict[str, str] = {
 # radar figure. Spokes are grouped into contiguous TEM_FEATURE_CATEGORY_ORDER
 # blocks and colored by TEM_FEATURE_CATEGORY_COLORS (both above). This dict
 # only shortens the long raw feature names so the horizontal spoke labels
-# (read left-to-right, not rotated along the spoke) stay readable at the ~24
+# (read left-to-right, not rotated along the spoke) stay readable at the ~20
 # TEM feature count.
 #
 # The "Mito_" prefix is dropped everywhere (every TEM feature describes a

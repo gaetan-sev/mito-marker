@@ -163,7 +163,7 @@ def plot_radar(
         Orientation — see TEM_FEATURE_CATEGORIES), labels are abbreviated
         (TEM_RADAR_FEATURE_ABBREVIATIONS), colored by category
         (TEM_FEATURE_CATEGORY_COLORS) with a small category legend top-left,
-        and drawn horizontally instead of radially — readable at the ~24
+        and drawn horizontally instead of radially — readable at the ~20
         TEM feature count without SFC's overlap risk. A thick dashed radial
         line marks each category boundary (e.g. Size → Shape),
         toggled with show_category_boundaries, and labels within 15° of
