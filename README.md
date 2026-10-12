@@ -128,6 +128,12 @@ tem_morphology_anndata = ingest_tem_folder(
     output_file_path="data/processed/tem.h5ad",
 )
 inspect_anndata(tem_morphology_anndata)
+
+# A .h5ad saved by an older version keeps that version's excluded features:
+# re-stamp them after loading so the current default applies (ADR-018).
+import anndata
+from mito_marker import refresh_tem_non_analytical_flags
+tem_morphology_anndata = refresh_tem_non_analytical_flags(anndata.read_h5ad("data/processed/tem.h5ad"))
 ```
 
 ### Inspect an AnnData object
@@ -390,9 +396,26 @@ Scans a folder for `*_MITO_measurements.txt` files, parses each filename for spe
 | `.obs['subject_ID']` | Digits after `"fish"` separator or first 3+ digit sequence |
 | `.obs['Image_Name']` | Image identifier from the source file |
 | `.obs['source_filename']` | Absolute path of the source `.txt` file |
-| `.var` | 28 rows indexed by `TEM_FEATURE_COLUMNS` |
+| `.var` | 28 rows indexed by `TEM_FEATURE_COLUMNS`; `is_non_analytical` flags the features excluded from analysis by default |
 
 Missing tokens produce a `warnings.warn()` and the field is set to `None` — no hard failure.
+
+**Features excluded from analysis by default** (`TEM_NON_ANALYTICAL_FEATURES`, ADR-018): every analysis function skips the features flagged in `.var['is_non_analytical']`, and `TEM_FEATURE_SUBSETS` does not list them.
+
+- Image-referenced (`TEM_IMAGE_REFERENCED_FEATURES`): `Mito_CentroidX/Y`, `Mito_FeretX/Y`, `CristaeOrientation_Angle`. For spatial studies only.
+- Unvalidated (`TEM_UNVALIDATED_FEATURES`, with the reason for each): the 10 grey-level columns, i.e. `Mito_MeanInt`, `Mito_MedianInt`, `Mito_TotalInt`, `Intensity_SD`, their `_CORR` variants and both `Intensity_SD_percent` columns. Raw grey levels are comparable within one image only, until a normalization is validated. `Skewness` and `Kurtosis` stay analysed.
+
+To analyse one of them, opt it in: `tem_morphology_anndata.var.loc["CristaeOrientation_Angle", "is_non_analytical"] = False`.
+
+#### `tem_anndata_builder.py` — `refresh_tem_non_analytical_flags`
+
+```python
+def refresh_tem_non_analytical_flags(
+    tem_morphology_anndata: anndata.AnnData,
+) -> anndata.AnnData
+```
+
+Re-stamps `.var['is_non_analytical']` from the current `TEM_NON_ANALYTICAL_FEATURES`, in place. The flag is written at ingestion, so a `.h5ad` saved by an older package version keeps that version's list: call this right after `anndata.read_h5ad()`. Prints the features newly excluded or included. Raises `ValueError` if no `.var` name is a TEM feature.
 
 ---
 

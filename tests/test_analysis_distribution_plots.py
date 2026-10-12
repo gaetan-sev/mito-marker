@@ -146,9 +146,9 @@ def tem_like_anndata() -> anndata.AnnData:
     """
     rng = np.random.default_rng(42)
     feature_names = [
-        "Intensity_SD",              # Intensity
+        "Skewness",                  # Intensity
         "Mito_Area",                 # Size
-        "CristaeOrientation_Angle",  # Cristae Orientation
+        "CristaeOrientation_Major",  # Cristae Orientation
         "Mito_AR",                   # Shape
         "Not_A_Real_Feature",        # unmapped -> "Other"
     ]
@@ -313,7 +313,7 @@ class TestResolveGroupOrder:
 class TestSortFeaturesByCategory:
     def test_reorders_into_contiguous_category_blocks(self):
         shuffled = [
-            "Intensity_SD", "Mito_Area", "CristaeOrientation_Angle", "Mito_AR",
+            "Skewness", "Mito_Area", "CristaeOrientation_Major", "Mito_AR",
         ]
         result = _sort_features_by_category(shuffled)
         categories_in_result = [TEM_FEATURE_CATEGORIES[name] for name in result]
@@ -334,7 +334,7 @@ class TestSortFeaturesByCategory:
         assert result[-1] == "Not_A_Real_Feature"  # "Other" sorts last
 
     def test_no_feature_ever_dropped(self):
-        features = ["Intensity_SD", "Mito_Area", "CristaeOrientation_Angle", "Mito_AR"]
+        features = ["Skewness", "Mito_Area", "CristaeOrientation_Major", "Mito_AR"]
         assert set(_sort_features_by_category(features)) == set(features)
 
     def test_stable_within_category(self):

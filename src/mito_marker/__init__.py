@@ -151,11 +151,12 @@ from mito_marker.analysis import (
 )
 from mito_marker.inspector import inspect_anndata
 from mito_marker.sfc import enrich_with_clinical_data, ingest_sfc_folder
-from mito_marker.tem import ingest_tem_folder
+from mito_marker.tem import ingest_tem_folder, refresh_tem_non_analytical_flags
 
 __all__ = [
     # TEM ingestion
     "ingest_tem_folder",
+    "refresh_tem_non_analytical_flags",
     # SFC ingestion
     "ingest_sfc_folder",
     "enrich_with_clinical_data",

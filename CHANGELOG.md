@@ -6,6 +6,30 @@ Install a release with `pip install git+https://github.com/gaetan-sev/mito-marke
 
 ## [Unreleased]
 
+### Added
+- `refresh_tem_non_analytical_flags()` (exported from `mito_marker` and
+  `mito_marker.tem`) re-stamps `.var['is_non_analytical']` on a TEM AnnData
+  loaded from a `.h5ad` saved by an older version, so the current default
+  exclusions apply. It prints the features newly excluded or included.
+- `TEM_IMAGE_REFERENCED_FEATURES` and `TEM_UNVALIDATED_FEATURES` (with the
+  reason for each feature) in `controlled_vocabulary.py`.
+
+### Changed
+- **Breaking** (changed default): the cristae angle and the 10 grey-level
+  columns are excluded from analysis by default, like the centroid coordinates
+  (ADR-018). That is `CristaeOrientation_Angle`, `Mito_MeanInt`,
+  `Mito_MedianInt`, `Mito_TotalInt`, `Intensity_SD`, their four `_CORR`
+  variants, and both `Intensity_SD_percent` columns.
+  - `TEM_NON_ANALYTICAL_FEATURES` lists 15 features instead of 4, so 13 TEM
+    features are analysed by default.
+  - `TEM_FEATURE_SUBSETS` no longer lists them: Intensity keeps `Skewness` and
+    `Kurtosis`, and Cristae Orientation keeps 3 features.
+  - Migration: after `anndata.read_h5ad()`, call
+    `refresh_tem_non_analytical_flags()`.
+  - To analyse one of these features (for example, grey levels compared within
+    one image), set `.var.loc[feature_name, "is_non_analytical"] = False`.
+    Code that read them from `TEM_FEATURE_SUBSETS` must name them explicitly.
+
 ## [0.2.1] — 2026-09-28
 
 PCA loadings panel on every PCA plot and a single loading contribution formula (ADR-016).

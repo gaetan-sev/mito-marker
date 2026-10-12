@@ -18,9 +18,12 @@ from mito_marker.controlled_vocabulary import (
     ALLOWED_DIET_TEM,
     ALLOWED_SPECIES_TEM,
     TEM_FEATURE_COLUMNS,
+    TEM_NON_ANALYTICAL_FEATURES,
 )
-from mito_marker.tem.tem_anndata_builder import build_tem_anndata
-
+from mito_marker.tem.tem_anndata_builder import (
+    build_tem_anndata,
+    refresh_tem_non_analytical_flags,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -271,6 +274,91 @@ class TestVarIndex:
     def test_var_feature_description_empty_strings(self):
         result = _build()
         assert (result.var["feature_description"] == "").all()
+
+    def test_var_flags_exactly_the_default_exclusions(self):
+        result = _build()
+        flagged = result.var_names[result.var["is_non_analytical"]].tolist()
+        assert flagged == [name for name in TEM_FEATURE_COLUMNS if name in TEM_NON_ANALYTICAL_FEATURES]
+
+
+# ---------------------------------------------------------------------------
+# refresh_tem_non_analytical_flags (ADR-018)
+# ---------------------------------------------------------------------------
+
+# The four features flagged by package versions before ADR-018.
+_PRE_ADR_018_FLAGS = ["Mito_CentroidX", "Mito_CentroidY", "Mito_FeretX", "Mito_FeretY"]
+
+
+def _build_with_old_flags() -> anndata.AnnData:
+    """A TEM AnnData as saved by a package version before ADR-018."""
+    tem_morphology_anndata = _build()
+    tem_morphology_anndata.var["is_non_analytical"] = [
+        name in _PRE_ADR_018_FLAGS for name in TEM_FEATURE_COLUMNS
+    ]
+    return tem_morphology_anndata
+
+
+class TestRefreshNonAnalyticalFlags:
+    def test_old_flags_are_replaced_by_the_current_default(self):
+        result = refresh_tem_non_analytical_flags(_build_with_old_flags())
+        flagged = set(result.var_names[result.var["is_non_analytical"]])
+        assert flagged == set(TEM_NON_ANALYTICAL_FEATURES)
+
+    def test_new_exclusions_are_flagged(self):
+        result = refresh_tem_non_analytical_flags(_build_with_old_flags())
+        for feature_name in [
+            "CristaeOrientation_Angle", "Mito_MeanInt", "Mito_MedianInt",
+            "Intensity_SD", "Intensity_SD_percent", "Intensity_SD_percent_CORR",
+        ]:
+            assert result.var.loc[feature_name, "is_non_analytical"], feature_name
+
+    def test_modifies_in_place_and_returns_the_same_object(self):
+        tem_morphology_anndata = _build_with_old_flags()
+        result = refresh_tem_non_analytical_flags(tem_morphology_anndata)
+        assert result is tem_morphology_anndata
+
+    def test_flag_column_is_boolean(self):
+        result = refresh_tem_non_analytical_flags(_build_with_old_flags())
+        assert result.var["is_non_analytical"].dtype == bool
+
+    def test_x_is_not_modified(self):
+        tem_morphology_anndata = _build_with_old_flags()
+        x_before = tem_morphology_anndata.X.copy()
+        refresh_tem_non_analytical_flags(tem_morphology_anndata)
+        np.testing.assert_array_equal(tem_morphology_anndata.X, x_before)
+
+    def test_creates_the_column_when_absent(self):
+        tem_morphology_anndata = _build()
+        del tem_morphology_anndata.var["is_non_analytical"]
+        result = refresh_tem_non_analytical_flags(tem_morphology_anndata)
+        assert int(result.var["is_non_analytical"].sum()) == len(TEM_NON_ANALYTICAL_FEATURES)
+
+    def test_feature_subset_is_supported(self):
+        subset_names = ["Mito_Area", "Mito_MeanInt", "CristaeOrientation_Angle", "Skewness"]
+        tem_morphology_anndata = _build()[:, subset_names].copy()
+        result = refresh_tem_non_analytical_flags(tem_morphology_anndata)
+        assert result.var["is_non_analytical"].tolist() == [False, True, True, False]
+
+    def test_manual_opt_in_after_the_call_is_kept(self):
+        result = refresh_tem_non_analytical_flags(_build_with_old_flags())
+        result.var.loc["CristaeOrientation_Angle", "is_non_analytical"] = False
+        assert not result.var.loc["CristaeOrientation_Angle", "is_non_analytical"]
+        assert result.var.loc["Mito_CentroidX", "is_non_analytical"]
+
+    def test_non_tem_object_raises(self):
+        sfc_like_anndata = anndata.AnnData(
+            X=np.ones((3, 2), dtype=np.float32),
+            var=pd.DataFrame(index=["FSC-A", "SSC-A"]),
+        )
+        with pytest.raises(ValueError, match="TEM AnnData"):
+            refresh_tem_non_analytical_flags(sfc_like_anndata)
+
+    def test_console_reports_what_changed(self, capsys):
+        refresh_tem_non_analytical_flags(_build_with_old_flags())
+        console_output = capsys.readouterr().out
+        assert "Newly excluded by this call (11)" in console_output
+        assert "Newly included by this call (0)" in console_output
+        assert "Analytical features left: 13" in console_output
 
 
 # ---------------------------------------------------------------------------
