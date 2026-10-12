@@ -15,15 +15,20 @@ Install a release with `pip install git+https://github.com/gaetan-sev/mito-marke
   reason for each feature) in `controlled_vocabulary.py`.
 
 ### Changed
-- **Breaking** (changed default): `CristaeOrientation_Angle`, `Mito_MeanInt`,
-  `Intensity_SD_percent` and `Intensity_SD_percent_CORR` are excluded from
-  analysis by default, like the centroid coordinates (ADR-018).
-  `TEM_NON_ANALYTICAL_FEATURES` lists 8 features instead of 4, and
-  `TEM_FEATURE_SUBSETS` no longer lists the four (Intensity: 9 features,
-  Cristae Orientation: 3). Migration: after `anndata.read_h5ad()`, call
-  `refresh_tem_non_analytical_flags()`. To analyse one of these features,
-  set `.var.loc[feature_name, "is_non_analytical"] = False`; code that read
-  them from `TEM_FEATURE_SUBSETS` must name them explicitly.
+- **Breaking** (changed default): the cristae angle and the 10 grey-level
+  columns are excluded from analysis by default, like the centroid coordinates
+  (ADR-018). That is `CristaeOrientation_Angle`, `Mito_MeanInt`,
+  `Mito_MedianInt`, `Mito_TotalInt`, `Intensity_SD`, their four `_CORR`
+  variants, and both `Intensity_SD_percent` columns.
+  - `TEM_NON_ANALYTICAL_FEATURES` lists 15 features instead of 4, so 13 TEM
+    features are analysed by default.
+  - `TEM_FEATURE_SUBSETS` no longer lists them: Intensity keeps `Skewness` and
+    `Kurtosis`, and Cristae Orientation keeps 3 features.
+  - Migration: after `anndata.read_h5ad()`, call
+    `refresh_tem_non_analytical_flags()`.
+  - To analyse one of these features (for example, grey levels compared within
+    one image), set `.var.loc[feature_name, "is_non_analytical"] = False`.
+    Code that read them from `TEM_FEATURE_SUBSETS` must name them explicitly.
 
 ## [0.2.1] — 2026-09-28
 

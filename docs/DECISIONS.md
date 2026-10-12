@@ -812,22 +812,35 @@ are not. The new loadings panel on every PCA plot needed one formula.
 
 (ADR-017, TEM pixel scale, is on the unmerged branch `feat/tem-pixel-scale`.)
 
-**Context**: four TEM features produced artefacts in mito-marker-lab experiments
-and were excluded by hand, experiment by experiment:
+**Context**: several TEM features produced artefacts in mito-marker-lab
+experiments and were excluded by hand, experiment by experiment:
 
 - `CristaeOrientation_Angle` is measured against the image frame and is
   circular (0° = 180°). It split ZFish P1 at 23° vs 158°, with most images on
   one side of 90° (EXP-031). It is still reported, with any value, when no
   cristae orientation is found (EXP-032 step 5c). Like the centroid
   coordinates, it describes the image, not the mitochondrion.
-- `Mito_MeanInt` carries a strong imaging and staining batch effect: KMeans on
-  ZFish P1 split whole animals by grey level (EXP-031). Six of the seven
-  processed TEM files hold per-image standardized grey levels and one holds raw
-  grey levels (EXP-032 step 5f). No normalization has been validated.
+- The grey-level columns carry a strong imaging and staining batch effect.
+  - KMeans on ZFish P1 split whole animals by grey level, `Mito_MedianInt`
+    first (EXP-031).
+  - Six of the seven processed TEM files hold per-image standardized grey
+    levels, and one holds raw grey levels (EXP-032 step 5f).
+  - In the raw export, image means range from 73 to 201 grey levels
+    (EXP-034).
+  - Brightness differs between animals even within one batch: in the ZFish
+    Young/Old images, 4 fish are near 110 grey levels and 6 near 150–164,
+    unrelated to age (EXP-032 step 5f).
+  - Raw grey levels are therefore comparable within one image only, and no
+    normalization has been validated.
+- The `_CORR` columns are centred on 0, uncorrelated with the uncorrected
+  column within an image, and poorly reproduced between two segmentations of
+  the same images. Their definition is unknown (EXP-032 step 5f).
 - `Intensity_SD_percent` and `Intensity_SD_percent_CORR` are coefficients of
   variation (SD / mean). They explode when the mean is close to 0, which is the
   case for the standardized files and for every `_CORR` mean (EXP-032 step 5d).
   The computation is not validated.
+- `Skewness` and `Kurtosis` are unchanged by a per-image linear rescaling, so
+  they are comparable across files (EXP-032 step 5f).
 
 **Decision**:
 
@@ -835,28 +848,41 @@ and were excluded by hand, experiment by experiment:
   one per reason:
   - `TEM_IMAGE_REFERENCED_FEATURES`: `Mito_CentroidX/Y`, `Mito_FeretX/Y`,
     `CristaeOrientation_Angle`. For spatial studies only.
-  - `TEM_UNVALIDATED_FEATURES`: `{feature: reason}` for `Mito_MeanInt`,
-    `Intensity_SD_percent`, `Intensity_SD_percent_CORR`. A feature leaves this
-    dict, through a new ADR, once its computation or normalization is
-    validated.
-- `TEM_NON_ANALYTICAL_FEATURES` is their union. It is still the list stamped
-  into `.var['is_non_analytical']`, so every analysis function excludes the
-  eight features with no change of its own.
-- `TEM_FEATURE_SUBSETS` (ADR-014) lists analysed features only. The four
+  - `TEM_UNVALIDATED_FEATURES` (`{feature: reason}`): the 10 grey-level
+    columns, i.e. `Mito_MeanInt`, `Mito_MedianInt`, `Mito_TotalInt`,
+    `Intensity_SD`, their four `_CORR` variants, and both
+    `Intensity_SD_percent` columns. A feature leaves this dict, through a new
+    ADR, once its computation or normalization is validated.
+- `Skewness` and `Kurtosis` stay analysed by default.
+- `TEM_NON_ANALYTICAL_FEATURES` is the union of the two lists (15 features).
+  It is still the list stamped into `.var['is_non_analytical']`, so every
+  analysis function excludes them with no change of its own.
+- `TEM_FEATURE_SUBSETS` (ADR-014) lists analysed features only. The excluded
   features leave their categories, as the coordinates already did, and an
   opted-in feature falls back to `Other`. The four categories of ADR-014 are
-  unchanged: Intensity keeps 9 features, Cristae Orientation keeps 3.
+  unchanged: Intensity keeps `Skewness` and `Kurtosis`, and Cristae
+  Orientation keeps 3 features.
 - `refresh_tem_non_analytical_flags()` re-stamps the flag on an AnnData saved
   by an older version. The flag is written at ingestion, so without this call
   the `.h5ad` files already on disk would keep the four-feature list.
 - Opting a feature back in stays explicit:
-  `.var.loc[feature_name, "is_non_analytical"] = False`.
+  `.var.loc[feature_name, "is_non_analytical"] = False`. Grey levels are
+  opted in for within-image comparisons (for example, pale vs dark
+  mitochondria of the same image), and for within-batch comparisons once a
+  normalization is validated.
 
 **Alternatives considered**:
 
 - One list, with every excluded feature called non-analytical: rejected. It
   hides why each feature is excluded. The unvalidated features are meant to
   return once validated; the image-referenced ones are not.
+- Excluding `Mito_MeanInt` alone: rejected. `Mito_MedianInt`, `Mito_TotalInt`
+  and `Intensity_SD` are rescaled per image in the same way, and
+  `Mito_MedianInt` separated the batches most strongly (EXP-031).
+- Keeping the grey levels in the default until a batch effect is shown in each
+  analysis: rejected. A batch effect would enter generic analyses (PCA,
+  clustering, radar) without any warning. An exclusion is visible, and is
+  undone in one line.
 - A second `.var` column (for example `is_unvalidated`) read by every analysis
   function: rejected. About ten modules each carry their own copy of the mask
   helper, and all of them would need the change. The reason is already
@@ -871,15 +897,15 @@ and were excluded by hand, experiment by experiment:
 **Consequences**:
 
 - PCA, UMAP, radar, clustermap, feature selection and group comparison
-  analyse 20 TEM features by default instead of 24. Results produced before
-  this ADR are not comparable feature-for-feature.
-- `run_feature_subset_challenge(tem_anndata, TEM_FEATURE_SUBSETS)` compares
-  smaller Intensity and Cristae Orientation subsets.
-- Code that reads `TEM_FEATURE_SUBSETS["Intensity"]` to study these columns
+  analyse 13 TEM features by default instead of 24: Size (4), Shape (4),
+  Intensity (`Skewness`, `Kurtosis`) and Cristae Orientation (3). Results
+  produced before this ADR are not comparable feature-for-feature.
+- `run_feature_subset_challenge(tem_anndata, TEM_FEATURE_SUBSETS)` compares a
+  two-feature Intensity subset and a three-feature Cristae Orientation subset.
+- Code that reads `TEM_FEATURE_SUBSETS["Intensity"]` to study the grey levels
   must now name them explicitly.
-- Open: `Mito_MedianInt`, `Mito_TotalInt`, `Intensity_SD` and the `_CORR`
-  columns are standardized like `Mito_MeanInt` (EXP-032 step 5f). They remain
-  analysed by default until a decision is taken on them.
+- Validating an intensity normalization on the raw export (EXP-034) is the
+  condition for bringing grey levels back into the default.
 
 ---
 

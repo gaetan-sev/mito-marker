@@ -290,12 +290,36 @@ TEM_IMAGE_REFERENCED_FEATURES: list[str] = [
 # 2. Unvalidated features — excluded until their computation or normalization
 #    is validated. Key = feature, value = why it is excluded. Remove a feature
 #    from this dict (with a new ADR) once it is validated.
+#    These are the 10 grey-level columns. Raw grey levels are comparable within
+#    one image only: image means range 73–201 grey levels, and differ between
+#    animals of the same batch (mito-marker-lab, EXP-032 step 5f, EXP-034).
+#    Opt them in for within-image analyses, or for within-batch analyses once
+#    a normalization is validated. Skewness and Kurtosis stay analysed: a
+#    per-image linear rescaling leaves them unchanged.
+_TEM_GREY_LEVEL_BATCH_REASON: str = (
+    "Grey level: comparable within one image only. Strong imaging/staining "
+    "batch effect between images and animals, even within one batch; no "
+    "validated intensity normalization yet (mito-marker-lab, EXP-031, "
+    "EXP-032 step 5f, EXP-034)."
+)
+_TEM_CORR_REASON: str = (
+    "Background-corrected (_CORR) column: centred on 0, uncorrelated with the "
+    "uncorrected column within an image, poorly reproduced between two "
+    "segmentations of the same images; definition unknown (mito-marker-lab, "
+    "EXP-032 step 5f)."
+)
 TEM_UNVALIDATED_FEATURES: dict[str, str] = {
-    "Mito_MeanInt": (
-        "Strong imaging/staining batch effect between animals and cohorts; "
-        "no validated intensity normalization yet (mito-marker-lab, EXP-031, "
-        "EXP-032 step 5f)."
+    "Mito_MeanInt": _TEM_GREY_LEVEL_BATCH_REASON,
+    "Mito_MeanInt_CORR": _TEM_CORR_REASON,
+    "Mito_MedianInt": _TEM_GREY_LEVEL_BATCH_REASON,
+    "Mito_MedianInt_CORR": _TEM_CORR_REASON,
+    "Mito_TotalInt": (
+        _TEM_GREY_LEVEL_BATCH_REASON + " On per-image standardized files, "
+        "total = area × standardized mean, so it mostly measures the area."
     ),
+    "Mito_TotalInt_CORR": _TEM_CORR_REASON,
+    "Intensity_SD": _TEM_GREY_LEVEL_BATCH_REASON,
+    "Intensity_SD_CORR": _TEM_CORR_REASON,
     "Intensity_SD_percent": (
         "Coefficient of variation (SD / mean): only meaningful on raw grey "
         "levels, explodes on per-image standardized files whose mean is close "
@@ -349,7 +373,7 @@ TEM_NON_ANALYTICAL_FEATURES: list[str] = (
 # outline shape are expected to behave very differently.
 #
 # Non-analytical features (TEM_NON_ANALYTICAL_FEATURES: the image-referenced
-# coordinates and cristae angle, and the unvalidated intensity features) are
+# coordinates and cristae angle, and the 10 grey-level columns) are
 # deliberately ABSENT — every feature listed here is analysed by default
 # (ADR-018). An opted-in non-analytical feature falls back to "Other".
 #
@@ -372,18 +396,11 @@ TEM_FEATURE_SUBSETS: dict[str, list[str]] = {
         "Mito_Solidity",
         "Mito_AR",
     ],
-    # Signal intensity and its distribution within the mitochondrion.
-    # Corrected variants (_CORR) account for background fluorescence.
-    # Mito_MeanInt and both Intensity_SD_percent columns are excluded until
+    # Shape of the grey-level distribution within the mitochondrion. The 10
+    # grey-level columns (mean, median, total, SD, their _CORR variants and
+    # both Intensity_SD_percent) are excluded until a normalization is
     # validated (TEM_UNVALIDATED_FEATURES).
     "Intensity": [
-        "Mito_MeanInt_CORR",
-        "Mito_MedianInt",
-        "Mito_MedianInt_CORR",
-        "Mito_TotalInt",
-        "Mito_TotalInt_CORR",
-        "Intensity_SD",
-        "Intensity_SD_CORR",
         "Skewness",
         "Kurtosis",
     ],
@@ -440,7 +457,7 @@ TEM_FEATURE_CATEGORY_COLORS: dict[str, str] = {
 # radar figure. Spokes are grouped into contiguous TEM_FEATURE_CATEGORY_ORDER
 # blocks and colored by TEM_FEATURE_CATEGORY_COLORS (both above). This dict
 # only shortens the long raw feature names so the horizontal spoke labels
-# (read left-to-right, not rotated along the spoke) stay readable at the ~20
+# (read left-to-right, not rotated along the spoke) stay readable at the ~13
 # TEM feature count.
 #
 # The "Mito_" prefix is dropped everywhere (every TEM feature describes a

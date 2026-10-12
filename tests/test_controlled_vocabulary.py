@@ -372,12 +372,23 @@ class TestTemDefaultExclusions:
             "CristaeOrientation_Angle",
         ]
 
-    def test_unvalidated_features_are_the_three_intensity_columns(self):
+    def test_unvalidated_features_are_the_ten_grey_level_columns(self):
         assert set(TEM_UNVALIDATED_FEATURES) == {
             "Mito_MeanInt",
+            "Mito_MeanInt_CORR",
+            "Mito_MedianInt",
+            "Mito_MedianInt_CORR",
+            "Mito_TotalInt",
+            "Mito_TotalInt_CORR",
+            "Intensity_SD",
+            "Intensity_SD_CORR",
             "Intensity_SD_percent",
             "Intensity_SD_percent_CORR",
         }
+
+    def test_skewness_and_kurtosis_stay_analysed(self):
+        assert "Skewness" not in TEM_NON_ANALYTICAL_FEATURES
+        assert "Kurtosis" not in TEM_NON_ANALYTICAL_FEATURES
 
     def test_every_unvalidated_feature_states_its_reason(self):
         for feature_name, reason in TEM_UNVALIDATED_FEATURES.items():
@@ -396,8 +407,8 @@ class TestTemDefaultExclusions:
         unknown = [name for name in TEM_NON_ANALYTICAL_FEATURES if name not in TEM_FEATURE_COLUMNS]
         assert unknown == []
 
-    def test_twenty_features_are_analysed_by_default(self):
-        assert len(TEM_FEATURE_COLUMNS) - len(TEM_NON_ANALYTICAL_FEATURES) == 20
+    def test_thirteen_features_are_analysed_by_default(self):
+        assert len(TEM_FEATURE_COLUMNS) - len(TEM_NON_ANALYTICAL_FEATURES) == 13
 
 
 # ---------------------------------------------------------------------------

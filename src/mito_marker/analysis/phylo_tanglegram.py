@@ -514,7 +514,7 @@ def compute_clade_support(
     """
     Bootstrap support for every clade of the morphology tree, resampling SUBJECTS.
 
-    A tree built from 6 points in ~20 dimensions is unstable. Without a
+    A tree built from 6 points in ~13 dimensions is unstable. Without a
     stability estimate there is no way to tell "morphology recovers the
     phylogeny" from "this tree is noise that happens to look right" — and,
     just as importantly, no way to tell a real disagreement from a fragile

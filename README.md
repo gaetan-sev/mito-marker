@@ -403,7 +403,7 @@ Missing tokens produce a `warnings.warn()` and the field is set to `None` — no
 **Features excluded from analysis by default** (`TEM_NON_ANALYTICAL_FEATURES`, ADR-018): every analysis function skips the features flagged in `.var['is_non_analytical']`, and `TEM_FEATURE_SUBSETS` does not list them.
 
 - Image-referenced (`TEM_IMAGE_REFERENCED_FEATURES`): `Mito_CentroidX/Y`, `Mito_FeretX/Y`, `CristaeOrientation_Angle`. For spatial studies only.
-- Unvalidated (`TEM_UNVALIDATED_FEATURES`, with the reason for each): `Mito_MeanInt`, `Intensity_SD_percent`, `Intensity_SD_percent_CORR`.
+- Unvalidated (`TEM_UNVALIDATED_FEATURES`, with the reason for each): the 10 grey-level columns, i.e. `Mito_MeanInt`, `Mito_MedianInt`, `Mito_TotalInt`, `Intensity_SD`, their `_CORR` variants and both `Intensity_SD_percent` columns. Raw grey levels are comparable within one image only, until a normalization is validated. `Skewness` and `Kurtosis` stay analysed.
 
 To analyse one of them, opt it in: `tem_morphology_anndata.var.loc["CristaeOrientation_Angle", "is_non_analytical"] = False`.
 

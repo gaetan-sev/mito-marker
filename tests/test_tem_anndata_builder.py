@@ -307,8 +307,8 @@ class TestRefreshNonAnalyticalFlags:
     def test_new_exclusions_are_flagged(self):
         result = refresh_tem_non_analytical_flags(_build_with_old_flags())
         for feature_name in [
-            "CristaeOrientation_Angle", "Mito_MeanInt",
-            "Intensity_SD_percent", "Intensity_SD_percent_CORR",
+            "CristaeOrientation_Angle", "Mito_MeanInt", "Mito_MedianInt",
+            "Intensity_SD", "Intensity_SD_percent", "Intensity_SD_percent_CORR",
         ]:
             assert result.var.loc[feature_name, "is_non_analytical"], feature_name
 
@@ -334,10 +334,10 @@ class TestRefreshNonAnalyticalFlags:
         assert int(result.var["is_non_analytical"].sum()) == len(TEM_NON_ANALYTICAL_FEATURES)
 
     def test_feature_subset_is_supported(self):
-        subset_names = ["Mito_Area", "Mito_MeanInt", "CristaeOrientation_Angle"]
+        subset_names = ["Mito_Area", "Mito_MeanInt", "CristaeOrientation_Angle", "Skewness"]
         tem_morphology_anndata = _build()[:, subset_names].copy()
         result = refresh_tem_non_analytical_flags(tem_morphology_anndata)
-        assert result.var["is_non_analytical"].tolist() == [False, True, True]
+        assert result.var["is_non_analytical"].tolist() == [False, True, True, False]
 
     def test_manual_opt_in_after_the_call_is_kept(self):
         result = refresh_tem_non_analytical_flags(_build_with_old_flags())
@@ -356,9 +356,9 @@ class TestRefreshNonAnalyticalFlags:
     def test_console_reports_what_changed(self, capsys):
         refresh_tem_non_analytical_flags(_build_with_old_flags())
         console_output = capsys.readouterr().out
-        assert "Newly excluded by this call (4)" in console_output
+        assert "Newly excluded by this call (11)" in console_output
         assert "Newly included by this call (0)" in console_output
-        assert "Analytical features left: 20" in console_output
+        assert "Analytical features left: 13" in console_output
 
 
 # ---------------------------------------------------------------------------
