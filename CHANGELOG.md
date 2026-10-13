@@ -29,6 +29,23 @@ Install a release with `pip install git+https://github.com/gaetan-sev/mito-marke
   - To analyse one of these features (for example, grey levels compared within
     one image), set `.var.loc[feature_name, "is_non_analytical"] = False`.
     Code that read them from `TEM_FEATURE_SUBSETS` must name them explicitly.
+- SHAP figures are preceded by a console block stating what they show and how
+  they are computed, for every model and both evaluation strategies: explainer
+  and its algorithm, explained output and its unit, meaning and sign of a SHAP
+  value, meaning of a class figure (output of that class, computed on samples
+  of every true class), which samples are explained, and how folds are
+  combined. Each figure adds how it is aggregated and how to read it.
+
+### Fixed
+- LOGO SHAP with KernelExplainer (MLP, SVM, GaussianNB, KNeighbors) explained
+  the first 20 rows of each left-out fold, in AnnData order (often the
+  acquisition order; in LAVO folds, the first subject only). It now explains
+  20 rows drawn at random, seeded by `[random_state, fold index]`. SHAP
+  figures of these models change; TreeExplainer and LinearExplainer, which
+  explain every row, are unchanged.
+- LOGO regression SHAP figures no longer show a class: the bar chart and the
+  beeswarm were titled with the second target value (e.g. `Class: 1.0`) and
+  the console described a binary classification.
 
 ## [0.2.1] — 2026-09-28
 

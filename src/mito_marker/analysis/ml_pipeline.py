@@ -41,6 +41,7 @@ Typical usage (interactive):
 
 import copy
 import pprint
+import textwrap
 import warnings
 from typing import Dict, List, Optional, Tuple
 
@@ -493,7 +494,10 @@ def run_ml_analysis(
         "shap_feature_names": None,
     }
     # Derive class names from original string labels (used by both branches).
-    shap_class_names = [str(c) for c in np.unique(target_labels)]
+    # Regression has no class: an empty list keeps class labels out of the figures.
+    shap_class_names = (
+        [str(c) for c in np.unique(target_labels)] if task_type == "classification" else []
+    )
 
     if ml_config["compute_shap"]:
         if ml_config["evaluation_strategy"] == "LOGO":
@@ -502,7 +506,23 @@ def run_ml_analysis(
             logo_importance = evaluation_results.get("logo_shap_importance")
             n_folds_used = evaluation_results.get("logo_shap_n_folds_used", 0)
             shap_per_class = ml_config.get("shap_per_class_plots", False)
+            logo_oof_shap = evaluation_results.get("logo_shap_oof_values")
+            logo_oof_X = evaluation_results.get("logo_shap_oof_features")
             if logo_importance is not None:
+                _print_shap_method_block(
+                    model_name=model_name,
+                    task_type=task_type,
+                    target_obs_column=target_obs_column,
+                    class_names=shap_class_names,
+                    strategy=strategy,
+                    explained_samples_lines=_describe_logo_shap_samples(
+                        ml_config=ml_config,
+                        explainer_type=_get_shap_explainer_type(model_name),
+                        n_folds_total=len(evaluation_results["logo_per_subject_scores"]),
+                        n_folds_used=n_folds_used,
+                        n_samples_explained=0 if logo_oof_X is None else logo_oof_X.shape[0],
+                    ),
+                )
                 _plot_logo_shap_bar(
                     averaged_importance=logo_importance,
                     feature_names=feature_names,
@@ -514,8 +534,6 @@ def run_ml_analysis(
                     species_label=species_label,
                 )
             # Beeswarm from OOF per-sample SHAP values (one dot per left-out sample).
-            logo_oof_shap = evaluation_results.get("logo_shap_oof_values")
-            logo_oof_X = evaluation_results.get("logo_shap_oof_features")
             if logo_oof_shap is not None and logo_oof_X is not None:
                 _draw_logo_shap_beeswarm(
                     oof_shap=logo_oof_shap,
@@ -527,6 +545,7 @@ def run_ml_analysis(
                     target_obs_column=target_obs_column,
                     show_per_class=shap_per_class,
                     species_label=species_label,
+                    task_type=task_type,
                 )
             shap_results = {
                 "shap_values":         logo_importance,
@@ -1287,6 +1306,297 @@ def _evaluate_standard_cv(
 # Internal: SHAP helpers (shared by _run_shap and _compute_logo_shap)
 # ---------------------------------------------------------------------------
 
+# KernelExplainer re-runs the model thousands of times per explained sample, so
+# both its background set and the number of explained samples are capped.
+_LOGO_KERNEL_SHAP_BACKGROUND_SIZE = 50
+_LOGO_KERNEL_SHAP_MAX_SAMPLES_PER_FOLD = 20
+_STANDARD_CV_KERNEL_SHAP_BACKGROUND_SIZE = 100
+_STANDARD_CV_KERNEL_SHAP_MAX_TEST_SAMPLES = 50
+
+_TREE_SHAP_MODEL_NAMES = ("RandomForest", "XGBoost", "ExtraTrees", "GradientBoosting")
+
+
+def _get_shap_explainer_type(model_name: str) -> str:
+    """
+    Return the name of the SHAP explainer used for a model.
+
+    Tree ensembles get the exact TreeExplainer, ElasticNet the exact
+    LinearExplainer, and every other model (MLP, SVM, GaussianNB, KNeighbors)
+    the model-agnostic KernelExplainer, since none has a dedicated exact one.
+
+    Arguments:
+        model_name: One of ALLOWED_MODEL_NAMES.
+
+    Returns:
+        "TreeExplainer", "LinearExplainer" or "KernelExplainer".
+    """
+    if model_name in _TREE_SHAP_MODEL_NAMES:
+        return "TreeExplainer"
+    if model_name == "ElasticNet":
+        return "LinearExplainer"
+    return "KernelExplainer"
+
+
+def _sample_shap_evaluation_rows(
+    n_rows: int,
+    max_rows: int,
+    random_state: int,
+    fold_index: int,
+) -> np.ndarray:
+    """
+    Draw the positions of the rows a KernelExplainer explains in one LOGO fold.
+
+    Rows are drawn at random without replacement, then sorted. Taking the first
+    rows instead would follow the AnnData order (often the acquisition order of
+    the tube) and, in a LAVO fold, would keep the first subject only.
+
+    The seed combines random_state and the fold index: each fold gets its own
+    reproducible draw, which does not change when other folds are skipped.
+
+    Arguments:
+        n_rows:       Number of rows in the left-out fold.
+        max_rows:     Maximum number of rows to explain.
+        random_state: Seed from ml_config["random_state"].
+        fold_index:   Position of the fold in the LOGO loop (0-based).
+
+    Returns:
+        Sorted 1D integer array of row positions within the fold. All rows
+        (0 … n_rows-1) when n_rows <= max_rows.
+    """
+    if n_rows <= max_rows:
+        return np.arange(n_rows)
+    fold_rng = np.random.default_rng([random_state, fold_index])
+    return np.sort(fold_rng.choice(n_rows, size=max_rows, replace=False))
+
+
+def _print_labelled_paragraph(label: str, text: str, label_width: int = 18) -> None:
+    """
+    Print "label : text" with the text wrapped and aligned under its first line.
+
+    Arguments:
+        label:       Short label shown on the left (e.g. "Method"). An empty
+                     label continues the previous paragraph without a colon.
+        text:        Explanation; wrapped at 100 characters.
+        label_width: Width of the label column.
+    """
+    prefix = f"    {label:<{label_width}}: " if label else " " * (label_width + 6)
+    print(textwrap.fill(
+        text, width=100, initial_indent=prefix, subsequent_indent=" " * len(prefix),
+        break_on_hyphens=False,
+    ))
+
+
+def _print_shap_method_block(
+    model_name: str,
+    task_type: str,
+    target_obs_column: str,
+    class_names: List[str],
+    strategy: str,
+    explained_samples_lines: List[str],
+) -> None:
+    """
+    Print what the SHAP figures that follow represent and how they are computed.
+
+    Covers the explainer and its algorithm, the model output being explained
+    (its unit depends on the model), what one SHAP value means, how to read its
+    sign, what a class figure means, and which samples are explained.
+
+    Arguments:
+        model_name:              One of ALLOWED_MODEL_NAMES.
+        task_type:               "classification" or "regression".
+        target_obs_column:       Name of the predicted .obs column.
+        class_names:             Class labels in model order (classification).
+        strategy:                "SingleMito" or "Bags".
+        explained_samples_lines: Evaluation-specific lines (LOGO or StandardCV)
+                                 describing which samples are explained.
+    """
+    explainer_type = _get_shap_explainer_type(model_name)
+
+    if explainer_type == "TreeExplainer":
+        method_text = (
+            "TreeSHAP: exact Shapley values computed from the structure of the fitted trees. "
+            "The baseline is the training data as recorded in the trees (path-dependent); "
+            "no background sample is drawn."
+        )
+    elif explainer_type == "LinearExplainer":
+        method_text = (
+            "exact Shapley values of a linear model: SHAP of feature j = coefficient_j x "
+            "(value of feature j - its mean in the training data)."
+        )
+    else:
+        method_text = (
+            "KernelSHAP: model-agnostic approximation. Each explained sample is predicted "
+            "many times with subsets of its features replaced by values from a background "
+            "set drawn at random from the training data; a weighted linear regression on "
+            "these predictions estimates the contribution of each feature. Approximate "
+            "and slow, hence the caps below."
+        )
+
+    if task_type == "regression":
+        output_text = f"predicted '{target_obs_column}', in its own unit."
+    elif explainer_type == "KernelExplainer" or model_name in ("RandomForest", "ExtraTrees"):
+        output_text = "predicted probability of each class (between 0 and 1)."
+    else:
+        # XGBoost, GradientBoosting and logistic regression are explained before
+        # the sigmoid/softmax, on the log-odds scale.
+        output_text = "log-odds of each class (model score before conversion to a probability)."
+
+    sample_text = (
+        "one bag of mitochondria (Bags strategy)."
+        if strategy == "Bags"
+        else "one mitochondrion or particle (SingleMito strategy)."
+    )
+
+    is_binary = task_type == "classification" and len(class_names) == 2
+    if task_type == "regression":
+        sign_text = (
+            f"positive = pushes the predicted '{target_obs_column}' up; "
+            "negative = pushes it down."
+        )
+    elif is_binary:
+        sign_text = (
+            f"only class '{class_names[1]}' is explained (second label in sorted order). "
+            f"Positive = pushes toward '{class_names[1]}'; negative = toward '{class_names[0]}'."
+        )
+    else:
+        sign_text = (
+            "positive = raises the output of the class named in the figure title; "
+            "negative = lowers it."
+        )
+
+    print()
+    print("  " + "-" * 58)
+    print("  SHAP — what the following figures show and how they are computed")
+    print("  " + "-" * 58)
+    _print_labelled_paragraph("Model / explainer", f"{model_name} -> {explainer_type}")
+    _print_labelled_paragraph("Method", method_text)
+    _print_labelled_paragraph("Explained output", output_text)
+    _print_labelled_paragraph("Sample", sample_text)
+    _print_labelled_paragraph(
+        "One SHAP value",
+        "contribution of one feature to the explained output for one sample, relative "
+        "to the baseline (average output over the background data). For each sample, "
+        "the SHAP values of all features add up to: output - baseline.",
+    )
+    _print_labelled_paragraph("Sign", sign_text)
+    if task_type == "classification" and not is_binary:
+        _print_labelled_paragraph(
+            "Class figures",
+            "a class figure explains the output for that class on ALL explained samples, "
+            "whatever their true class. It is not restricted to samples of that class. "
+            "'Global' figures average the classes.",
+        )
+    for line_index, explained_line in enumerate(explained_samples_lines):
+        _print_labelled_paragraph("Samples explained" if line_index == 0 else "", explained_line)
+
+
+def _describe_logo_shap_samples(
+    ml_config: dict,
+    explainer_type: str,
+    n_folds_total: int,
+    n_folds_used: int,
+    n_samples_explained: int,
+) -> List[str]:
+    """
+    Describe which samples the LOGO SHAP figures explain, for _print_shap_method_block.
+
+    Arguments:
+        ml_config:           Full ml_config dict (task_type, random_state,
+                             logo_group_by_column, shap_logo_min_fold_score).
+        explainer_type:      Value returned by _get_shap_explainer_type.
+        n_folds_total:       Number of LOGO folds run.
+        n_folds_used:        Number of folds that contributed SHAP values.
+        n_samples_explained: Total number of out-of-fold samples explained.
+
+    Returns:
+        List of explanation sentences.
+    """
+    group_by_column = ml_config.get("logo_group_by_column")
+    left_out_unit = (
+        f"all subjects sharing one '{group_by_column}' value"
+        if group_by_column
+        else "one subject"
+    )
+    explained_lines = [
+        f"LOGO, {n_folds_total} folds. In each fold a new model is trained without "
+        f"{left_out_unit}, and SHAP explains the left-out samples with that fold's model "
+        "(out-of-fold: never seen in training). The figures therefore combine "
+        f"{n_folds_used} different models.",
+    ]
+
+    if explainer_type == "KernelExplainer":
+        explained_lines.append(
+            f"KernelExplainer: up to {_LOGO_KERNEL_SHAP_MAX_SAMPLES_PER_FOLD} samples per "
+            "fold, drawn at random without replacement (seed = [random_state="
+            f"{ml_config['random_state']}, fold index]); background = "
+            f"{_LOGO_KERNEL_SHAP_BACKGROUND_SIZE} training samples drawn at random. "
+            f"{n_samples_explained} samples explained in total."
+        )
+    else:
+        explained_lines.append(
+            f"All samples of each left-out fold are explained ({n_samples_explained} in total)."
+        )
+
+    min_fold_score = ml_config.get("shap_logo_min_fold_score")
+    if ml_config["task_type"] == "regression":
+        threshold_text = (
+            " shap_logo_min_fold_score does not apply to regression."
+            if min_fold_score is not None
+            else ""
+        )
+        explained_lines.append(f"{n_folds_used}/{n_folds_total} folds used.{threshold_text}")
+    elif min_fold_score is not None:
+        explained_lines.append(
+            f"{n_folds_used}/{n_folds_total} folds used: folds with accuracy < "
+            f"{min_fold_score} are excluded, so the figures describe the model where "
+            "it predicts well."
+        )
+    else:
+        explained_lines.append(
+            f"{n_folds_used}/{n_folds_total} folds used (no accuracy threshold)."
+        )
+    return explained_lines
+
+
+def _describe_standard_cv_shap_samples(
+    explainer_type: str,
+    test_size: float,
+    n_test_samples: int,
+) -> List[str]:
+    """
+    Describe which samples the StandardCV SHAP figures explain, for _print_shap_method_block.
+
+    Arguments:
+        explainer_type: Value returned by _get_shap_explainer_type.
+        test_size:      Fraction of samples held out for SHAP (ml_config["test_size"]).
+        n_test_samples: Number of held-out samples before any KernelExplainer cap.
+
+    Returns:
+        List of explanation sentences.
+    """
+    test_percent = round(test_size * 100)
+    explained_lines = [
+        "StandardCV: SHAP does not use the cross-validation models. One extra model is "
+        f"trained on a random {100 - test_percent}% of the samples and explains the other "
+        f"{test_percent}%. The split is by sample, not by subject: samples of the same "
+        "subject can be in both sets.",
+    ]
+    n_explained = n_test_samples
+    if explainer_type == "KernelExplainer":
+        n_explained = min(_STANDARD_CV_KERNEL_SHAP_MAX_TEST_SAMPLES, n_test_samples)
+        explained_lines.append(
+            f"KernelExplainer: background = {_STANDARD_CV_KERNEL_SHAP_BACKGROUND_SIZE} "
+            "training samples drawn at random."
+        )
+    if n_explained < n_test_samples:
+        explained_lines.append(
+            f"{n_explained} of the {n_test_samples} test samples are explained (the test "
+            "set is already shuffled, so they are a random draw)."
+        )
+    else:
+        explained_lines.append(f"All {n_test_samples} test samples are explained.")
+    return explained_lines
+
 
 def _build_fold_shap_explainer(
     model,
@@ -1320,23 +1630,21 @@ def _build_fold_shap_explainer(
             "SHAP is not installed. Install it with: pip install shap>=0.44"
         ) from exc
 
-    if model_name in ("RandomForest", "XGBoost", "ExtraTrees", "GradientBoosting"):
+    explainer_type = _get_shap_explainer_type(model_name)
+    if explainer_type == "TreeExplainer":
         explainer = shap.TreeExplainer(model)
-        explainer_type = "TreeExplainer"
-    elif model_name == "ElasticNet":
+    elif explainer_type == "LinearExplainer":
         explainer = shap.LinearExplainer(model, X_train_fold)
-        explainer_type = "LinearExplainer"
     else:
         # KernelExplainer is slow — use a small background to stay tractable per fold.
         # Used for MLP, SVM, GaussianNB, KNeighbors — none has a dedicated exact
         # SHAP explainer, so a model-agnostic approximation is the correct choice.
-        n_background = min(50, X_train_fold.shape[0])
+        n_background = min(_LOGO_KERNEL_SHAP_BACKGROUND_SIZE, X_train_fold.shape[0])
         background = shap.sample(X_train_fold, n_background)
         predict_fn = (
             model.predict_proba if task_type == "classification" else model.predict
         )
         explainer = shap.KernelExplainer(predict_fn, background)
-        explainer_type = "KernelExplainer"
 
     return explainer, explainer_type
 
@@ -1457,6 +1765,8 @@ def _evaluate_logo_cv(
     Per-fold importance vectors are normalised to sum to 1 before averaging,
     so every fold votes equally regardless of model confidence.  Folds whose
     accuracy is below ml_config["shap_logo_min_fold_score"] are skipped.
+    With KernelExplainer, at most 20 rows per fold are explained, drawn at
+    random (seed = [random_state, fold index]).
 
     Arguments:
         model:        Base (unfitted) sklearn/xgboost estimator — cloned per fold.
@@ -1506,6 +1816,7 @@ def _evaluate_logo_cv(
             display_label_for_subject[str(raw_id)] = str(unique_ids[0]) if len(unique_ids) > 0 else str(raw_id)
 
     scale_in_fold = ml_config.get("scale_features_in_fold", False)
+    random_state: int = ml_config["random_state"]
 
     logo = LeaveOneGroupOut()
     per_subject_scores: Dict[str, float] = {}
@@ -1542,7 +1853,9 @@ def _evaluate_logo_cv(
 
     print()
     print("  LOGO/LAVO-CV per-fold results:")
-    for train_idx, test_idx in logo.split(feature_matrix, target_labels, groups=group_ids):
+    for fold_index, (train_idx, test_idx) in enumerate(
+        logo.split(feature_matrix, target_labels, groups=group_ids)
+    ):
         test_subjects = np.unique(subject_ids[test_idx])
         subject_label = str(test_subjects[0])
 
@@ -1651,10 +1964,18 @@ def _evaluate_logo_cv(
                     fold_explainer, fold_explainer_type = _build_fold_shap_explainer(
                         fold_model, model_name, X_train_fold, task_type
                     )
-                    # For KernelExplainer cap evaluation set to keep it tractable.
-                    X_test_fold_shap = X_test_fold
+                    # KernelExplainer is too slow to explain every row of the fold:
+                    # explain a random subset (see _sample_shap_evaluation_rows).
                     if fold_explainer_type == "KernelExplainer":
-                        X_test_fold_shap = X_test_fold_shap[: min(20, X_test_fold_shap.shape[0])]
+                        shap_row_positions = _sample_shap_evaluation_rows(
+                            n_rows=X_test_fold.shape[0],
+                            max_rows=_LOGO_KERNEL_SHAP_MAX_SAMPLES_PER_FOLD,
+                            random_state=random_state,
+                            fold_index=fold_index,
+                        )
+                    else:
+                        shap_row_positions = np.arange(X_test_fold.shape[0])
+                    X_test_fold_shap = X_test_fold[shap_row_positions]
                     fold_shap_raw = fold_explainer.shap_values(X_test_fold_shap)
                 fold_importance = _normalize_shap_to_importance(
                     fold_shap_raw, n_features=feature_matrix.shape[1]
@@ -1679,7 +2000,7 @@ def _evaluate_logo_cv(
                 oof_unique_subject_ids_beeswarm.append(
                     np.full(n_test_shap, display_label, dtype=object)
                 )
-                oof_conditions_beeswarm.append(target_labels[test_idx[:n_test_shap]])
+                oof_conditions_beeswarm.append(target_labels[test_idx[shap_row_positions]])
 
     mean_score = float(np.mean(cv_scores))
     std_score = float(np.std(cv_scores))
@@ -1879,13 +2200,34 @@ def _plot_logo_shap_bar(
     import matplotlib.pyplot as plt
 
     feature_names_array = np.array(feature_names)
+    is_multiclass = len(averaged_importance) > 1
 
     print()
-    print(
-        f"  [SHAP-LOGO] Bar chart: normalised mean |SHAP| averaged across {n_folds_used} folds."
+    print(f"  [SHAP-LOGO] Bar chart — relative importance of each feature ({n_folds_used} folds).")
+    _print_labelled_paragraph(
+        "Computed as",
+        "in each fold, mean |SHAP| of each feature over the explained samples, divided by "
+        "the sum over features (each fold sums to 1); then averaged over the folds, so "
+        "every fold weighs the same whatever its number of samples.",
     )
-    print("  [SHAP-LOGO] X-axis: normalised mean |SHAP| (each fold sums to 1 before averaging).")
-    print("  [SHAP-LOGO] Features sorted by descending average importance.")
+    _print_labelled_paragraph(
+        "How to read",
+        "0.20 = on average 20% of the model's total attribution. Unitless and without "
+        "direction (see the beeswarm for the direction). Features sorted by decreasing "
+        f"importance; with more than {max_display} features, an extra bar at the bottom "
+        "sums the others.",
+    )
+    if is_multiclass:
+        per_class_text = (
+            " Then one chart per class: importance for the output of that class, "
+            "computed on samples of every true class."
+            if show_per_class
+            else ""
+        )
+        _print_labelled_paragraph(
+            "Charts",
+            f"'Global' = mean of the per-class importance vectors.{per_class_text}",
+        )
 
     species_prefix = f"{species_label}\n" if species_label else ""
     title_suffix = (
@@ -1932,8 +2274,6 @@ def _plot_logo_shap_bar(
         )
         plt.tight_layout()
         plt.show()
-
-    is_multiclass = len(averaged_importance) > 1
 
     if is_multiclass:
         # Global chart: average |SHAP| across all classes → one unified ranking.
@@ -2053,6 +2393,7 @@ def _draw_logo_shap_beeswarm(
     max_display: int = 15,
     show_per_class: bool = False,
     species_label: str = "",
+    task_type: str = "classification",
 ) -> None:
     """
     Draw a beeswarm summary plot from LOGO out-of-fold SHAP values.
@@ -2080,6 +2421,9 @@ def _draw_logo_shap_beeswarm(
         max_display:       Max features shown per chart; remaining are summed.
         show_per_class:    When True, plot one additional beeswarm per class after
                            the global beeswarm (default False).
+        species_label:     Species line shown at the top of the title.
+        task_type:         "classification" or "regression". Regression has no
+                           class: the single beeswarm explains the predicted value.
     """
     feature_df = pd.DataFrame(oof_features, columns=feature_names)
     is_multiclass = len(oof_shap) > 1
@@ -2092,11 +2436,32 @@ def _draw_logo_shap_beeswarm(
 
     print()
     print(
-        f"  [SHAP-LOGO] Beeswarm: {oof_features.shape[0]} out-of-fold samples "
-        f"across {n_folds_used} folds."
+        f"  [SHAP-LOGO] Beeswarm — one dot per explained out-of-fold sample "
+        f"({oof_features.shape[0]} samples, {n_folds_used} folds)."
     )
-    print("  [SHAP-LOGO] Colour: red = high feature value, blue = low feature value.")
-    print("  [SHAP-LOGO] Last row aggregates all features beyond the top displayed.")
+    _print_labelled_paragraph(
+        "Position",
+        "SHAP value of the sample divided by its fold's total mean |SHAP|, so that "
+        "all folds share a common, unitless scale. Right of 0 = pushes the output up; "
+        "left of 0 = pushes it down.",
+    )
+    _print_labelled_paragraph(
+        "Colour",
+        "value of the feature for that sample (red = high, blue = low).",
+    )
+    _print_labelled_paragraph(
+        "Rows",
+        "sorted by mean |SHAP| over all dots; folds with more explained samples carry "
+        "more dots, so the order can differ slightly from the bar chart. With more "
+        f"than {max_display} features, the last row sums all features beyond the top "
+        f"{max_display - 1}.",
+    )
+    if is_multiclass:
+        _print_labelled_paragraph(
+            "Charts",
+            "'Global' = signed SHAP averaged over the classes (opposite effects on two "
+            "classes cancel out), then one beeswarm per class.",
+        )
 
     if is_multiclass:
         # Global beeswarm: mean signed SHAP across all classes per sample.
@@ -2110,10 +2475,6 @@ def _draw_logo_shap_beeswarm(
 
         # Per-class beeswarms: always shown for multiclass so each class's
         # directional signal is readable without the cross-class averaging artefact.
-        print(
-            f"  [SHAP-LOGO] Drawing one per-class beeswarm for each of the "
-            f"{len(oof_shap)} classes."
-        )
         for class_index, class_sv in enumerate(oof_shap):
             class_label = (
                 class_names[class_index]
@@ -2124,6 +2485,11 @@ def _draw_logo_shap_beeswarm(
                 class_sv, feature_df, max_display,
                 f"SHAP Beeswarm — Target class: {class_label}\n{title_prefix}",
             )
+    elif task_type == "regression":
+        _draw_beeswarm_with_sum_row(
+            oof_shap[0], feature_df, max_display,
+            f"Predicted: {target_obs_column}\n{title_prefix}",
+        )
     else:
         # Binary: oof_shap[0] contains SHAP values for the positive class (class index 1).
         # Positive SHAP => pushes toward this class; negative SHAP => pushes toward class 0.
@@ -2202,23 +2568,32 @@ def _run_shap(
     waterfall_index = ml_config.get("shap_waterfall_sample_index", 0)
     shap_per_class_plots = ml_config.get("shap_per_class_plots", False)
 
-    if model_name in ("RandomForest", "XGBoost", "ExtraTrees", "GradientBoosting"):
+    explainer_type = _get_shap_explainer_type(model_name)
+    _print_shap_method_block(
+        model_name=model_name,
+        task_type=task_type,
+        target_obs_column=target_obs_column,
+        class_names=class_names or [],
+        strategy=ml_config["strategy"],
+        explained_samples_lines=_describe_standard_cv_shap_samples(
+            explainer_type=explainer_type,
+            test_size=ml_config.get("test_size", 0.2),
+            n_test_samples=X_test.shape[0],
+        ),
+    )
+
+    if explainer_type == "TreeExplainer":
         explainer = shap.TreeExplainer(model)
-        explainer_type = "TreeExplainer"
-    elif model_name == "ElasticNet":
+    elif explainer_type == "LinearExplainer":
         explainer = shap.LinearExplainer(model, X_train)
-        explainer_type = "LinearExplainer"
     else:
         # KernelExplainer is slow — cap background and evaluation sets.
-        n_background = min(100, X_train.shape[0])
+        n_background = min(_STANDARD_CV_KERNEL_SHAP_BACKGROUND_SIZE, X_train.shape[0])
         background = shap.sample(X_train, n_background)
-        print(
-            f"  [SHAP] KernelExplainer ({model_name}): using {n_background} background "
-            f"samples. Evaluating on max 50 test samples — this may take a moment …"
-        )
+        print("  [SHAP] KernelExplainer is slow — this may take a moment …")
         explainer = shap.KernelExplainer(model.predict_proba if task_type == "classification" else model.predict, background)
-        explainer_type = "KernelExplainer"
-        X_test = X_test[: min(50, X_test.shape[0])]
+        # train_test_split has already shuffled X_test, so its first rows are a random draw.
+        X_test = X_test[: min(_STANDARD_CV_KERNEL_SHAP_MAX_TEST_SAMPLES, X_test.shape[0])]
 
     shap_values = explainer.shap_values(X_test)
 
@@ -2267,18 +2642,35 @@ def _run_shap(
     )
 
     print()
-    print("  [SHAP] Interpreting the SHAP Feature Importance plots:")
-    print("    Bar chart  — mean(|SHAP|) per feature; shows overall importance across classes.")
-    print("    Beeswarm   — each dot is one test sample; shows direction and spread of impact.")
-    print("    Colour (beeswarm): pink/red = high feature value, blue/purple = low feature value.")
-    print("    Features are sorted top-to-bottom by mean absolute SHAP value.")
-    if binary_class_label:
-        print(f"    Positive SHAP pushes prediction TOWARD '{binary_class_label}'; negative pushes AWAY from it.")
-    elif is_multiclass:
-        print("    Positive SHAP pushes prediction TOWARD the labelled class; negative pushes AWAY.")
-    else:
-        print("    Positive SHAP pushes prediction TOWARD higher values; negative pushes toward lower values.")
-    print("    The last beeswarm row ('Sum of N other features') aggregates all remaining features.")
+    print(f"  [SHAP] Bar chart — importance of each feature ({X_test.shape[0]} test samples).")
+    _print_labelled_paragraph(
+        "Computed as",
+        "mean |SHAP| of each feature over the explained test samples, in the unit of the "
+        "explained output (no normalisation). Multiclass: one coloured segment per class, "
+        "stacked, so the bar length is the sum over classes.",
+    )
+    _print_labelled_paragraph(
+        "How to read",
+        "average size of the feature's effect on the output, without direction. "
+        "Features sorted by decreasing importance; with more than "
+        f"{SHAP_MAX_DISPLAY} features, the last bar sums the others.",
+    )
+    print(f"  [SHAP] Beeswarm — one dot per explained test sample ({X_test.shape[0]} samples).")
+    _print_labelled_paragraph(
+        "Position",
+        "SHAP value of the sample, in the unit of the explained output. Right of 0 = "
+        "pushes the output up; left of 0 = pushes it down.",
+    )
+    _print_labelled_paragraph(
+        "Colour",
+        "value of the feature for that sample (red = high, blue = low).",
+    )
+    if is_multiclass:
+        _print_labelled_paragraph(
+            "Charts",
+            "'Global' = signed SHAP averaged over the classes (opposite effects on two "
+            "classes cancel out), then one beeswarm per class.",
+        )
 
     # ---------------------------------------------------------------
     # Plot 1: Bar chart — mean(|SHAP|) overview, all classes at once.
@@ -2433,8 +2825,8 @@ def _run_shap(
                 print(f"      higher value of '{target_obs_column}').")
                 print("    - Blue bars push the model output LOWER (toward the negative class /")
                 print(f"      lower value of '{target_obs_column}').")
-            print("    - E[f(x)] is the average model output across the training set (baseline).")
-            print("    - f(x) is the final model output for this sample.")
+            print("    - E[f(x)] is the baseline: average model output over the background data.")
+            print("    - f(x) is the model output for this sample = E[f(x)] + sum of the bars.")
             waterfall_title_line1 = f"SHAP Waterfall — sample index {waterfall_index}"
             if binary_class_label:
                 waterfall_title_line1 += f" | Target class: {binary_class_label}"
