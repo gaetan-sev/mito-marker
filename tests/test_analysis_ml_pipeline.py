@@ -26,6 +26,11 @@ Covers:
     - compute_shap=False: shap_values is None.
     - feature_names_override bypasses get_selected_data_matrix().
 
+  SHAP:
+    - LOGO + KernelExplainer explains a reproducible random draw of each
+      left-out fold (_sample_shap_evaluation_rows), not its first rows.
+    - The console explains each SHAP figure (method, output, sign, samples).
+
   run_feature_subset_challenge():
     - Returns a DataFrame with one row per subset.
     - "All" subset (None value) runs on all features.
@@ -64,7 +69,10 @@ from mito_marker.analysis.ml_pipeline import (
     _apply_feature_name_filter,
     _build_fold_shap_explainer,
     _build_model,
+    _describe_logo_shap_samples,
     _normalize_shap_to_importance,
+    _print_shap_method_block,
+    _sample_shap_evaluation_rows,
     _select_bag_features_pipeline,
     get_sfc_feature_subsets,
     run_feature_subset_challenge,
@@ -747,6 +755,170 @@ class TestLogoShap:
         for vec in result:
             assert vec.shape == (6,)
             assert abs(vec.sum() - 1.0) < 1e-5
+
+
+# ---------------------------------------------------------------------------
+# Tests: rows explained by KernelExplainer in LOGO, and SHAP console text
+# ---------------------------------------------------------------------------
+
+
+class TestSampleShapEvaluationRows:
+    """_sample_shap_evaluation_rows draws a reproducible random subset per fold."""
+
+    def test_all_rows_kept_when_fold_is_small(self):
+        positions = _sample_shap_evaluation_rows(n_rows=15, max_rows=20, random_state=42, fold_index=0)
+        np.testing.assert_array_equal(positions, np.arange(15))
+
+    def test_draw_is_sorted_unique_and_in_range(self):
+        positions = _sample_shap_evaluation_rows(n_rows=2300, max_rows=20, random_state=42, fold_index=3)
+        assert positions.shape == (20,)
+        assert len(np.unique(positions)) == 20
+        assert np.all(np.diff(positions) > 0)
+        assert positions.min() >= 0 and positions.max() < 2300
+
+    def test_draw_is_not_the_first_rows(self):
+        positions = _sample_shap_evaluation_rows(n_rows=2300, max_rows=20, random_state=42, fold_index=0)
+        assert not np.array_equal(positions, np.arange(20))
+
+    def test_same_seed_and_fold_give_same_draw(self):
+        first_draw = _sample_shap_evaluation_rows(n_rows=500, max_rows=20, random_state=7, fold_index=2)
+        second_draw = _sample_shap_evaluation_rows(n_rows=500, max_rows=20, random_state=7, fold_index=2)
+        np.testing.assert_array_equal(first_draw, second_draw)
+
+    def test_fold_index_and_seed_change_the_draw(self):
+        reference_draw = _sample_shap_evaluation_rows(n_rows=500, max_rows=20, random_state=7, fold_index=2)
+        other_fold_draw = _sample_shap_evaluation_rows(n_rows=500, max_rows=20, random_state=7, fold_index=3)
+        other_seed_draw = _sample_shap_evaluation_rows(n_rows=500, max_rows=20, random_state=8, fold_index=2)
+        assert not np.array_equal(reference_draw, other_fold_draw)
+        assert not np.array_equal(reference_draw, other_seed_draw)
+
+
+class TestLogoKernelShapRandomRows:
+    """LOGO + KernelExplainer (MLP) explains random rows of each left-out subject."""
+
+    def _run_logo_mlp_regression(self) -> tuple:
+        pytest.importorskip("shap")
+        test_anndata = _make_test_anndata(n_obs=160, n_vars=4, n_subjects=4)
+        config = _base_regression_config()
+        config["evaluation_strategy"] = "LOGO"
+        config["compute_shap"] = True
+        config["model_name"] = "MLP"
+        config["model_params"] = {"hidden_layer_sizes": (4,), "max_iter": 50}
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            results = run_ml_analysis(test_anndata, ml_config=config)
+        return test_anndata, results
+
+    def test_explained_rows_are_a_random_draw_with_matching_targets(self):
+        test_anndata, results = self._run_logo_mlp_regression()
+        explained_features = results["logo_shap_oof_features"]
+        explained_targets = results["logo_shap_oof_conditions"]
+        assert results["shap_explainer_type"] == "KernelExplainer"
+        # 4 subjects × 40 rows: 20 rows explained per left-out subject.
+        assert explained_features.shape == (80, 4)
+
+        data_matrix = np.asarray(test_anndata.X)
+        subject_ids = test_anndata.obs["subject_ID"].to_numpy()
+        for fold_index, subject in enumerate(np.unique(subject_ids)):
+            subject_rows = data_matrix[subject_ids == subject]
+            fold_features = explained_features[fold_index * 20:(fold_index + 1) * 20]
+            assert not np.array_equal(fold_features, subject_rows[:20]), (
+                f"Subject {subject}: the first 20 rows were explained instead of a random draw"
+            )
+            # Every explained row belongs to the left-out subject.
+            for explained_row in fold_features:
+                assert np.any(np.all(subject_rows == explained_row, axis=1))
+
+        # The stored target of each explained row is the target of that row.
+        for explained_row, explained_target in zip(explained_features, explained_targets):
+            row_position = int(np.flatnonzero(np.all(data_matrix == explained_row, axis=1))[0])
+            assert float(explained_target) == float(test_anndata.obs["age"].iloc[row_position])
+
+    def test_regression_console_explains_without_classes(self, capsys):
+        self._run_logo_mlp_regression()
+        console_output = " ".join(capsys.readouterr().out.split())
+        assert "SHAP — what the following figures show and how they are computed" in console_output
+        assert "KernelSHAP" in console_output
+        assert "drawn at random without replacement" in console_output
+        assert "pushes the predicted 'age' up" in console_output
+        assert "Binary beeswarm" not in console_output
+
+
+class TestShapConsoleExplanations:
+    """Console text printed before the SHAP figures."""
+
+    def test_method_block_tree_binary(self, capsys):
+        _print_shap_method_block(
+            model_name="RandomForest",
+            task_type="classification",
+            target_obs_column="age_group",
+            class_names=["Old", "Young"],
+            strategy="SingleMito",
+            explained_samples_lines=["Sentence describing the explained samples."],
+        )
+        console_output = " ".join(capsys.readouterr().out.split())
+        assert "RandomForest -> TreeExplainer" in console_output
+        assert "TreeSHAP" in console_output
+        assert "predicted probability of each class" in console_output
+        assert "only class 'Young' is explained" in console_output
+        assert "Class figures" not in console_output
+        assert "Sentence describing the explained samples." in console_output
+
+    def test_method_block_linear_multiclass(self, capsys):
+        _print_shap_method_block(
+            model_name="ElasticNet",
+            task_type="classification",
+            target_obs_column="age",
+            class_names=["D00", "D05", "D10"],
+            strategy="Bags",
+            explained_samples_lines=[],
+        )
+        console_output = " ".join(capsys.readouterr().out.split())
+        assert "LinearExplainer" in console_output
+        assert "log-odds of each class" in console_output
+        assert "one bag of mitochondria" in console_output
+        assert "whatever their true class" in console_output
+
+    def test_logo_samples_threshold_ignored_in_regression(self):
+        config = _base_regression_config()
+        config["shap_logo_min_fold_score"] = 0.7
+        explained_lines = _describe_logo_shap_samples(
+            ml_config=config,
+            explainer_type="TreeExplainer",
+            n_folds_total=12,
+            n_folds_used=12,
+            n_samples_explained=480,
+        )
+        explained_text = " ".join(explained_lines)
+        assert "does not apply to regression" in explained_text
+        assert "All samples of each left-out fold are explained (480 in total)" in explained_text
+
+    def test_logo_samples_threshold_excludes_folds_in_classification(self):
+        config = _base_classification_config()
+        config["shap_logo_min_fold_score"] = 0.7
+        explained_lines = _describe_logo_shap_samples(
+            ml_config=config,
+            explainer_type="KernelExplainer",
+            n_folds_total=12,
+            n_folds_used=9,
+            n_samples_explained=180,
+        )
+        explained_text = " ".join(explained_lines)
+        assert "9/12 folds used" in explained_text
+        assert "accuracy < 0.7 are excluded" in explained_text
+        assert "drawn at random" in explained_text
+
+    def test_standard_cv_run_prints_method_block(self, capsys):
+        pytest.importorskip("shap")
+        test_anndata = _make_test_anndata()
+        config = _base_classification_config()
+        config["compute_shap"] = True
+        run_ml_analysis(test_anndata, ml_config=config)
+        console_output = " ".join(capsys.readouterr().out.split())
+        assert "SHAP — what the following figures show and how they are computed" in console_output
+        assert "StandardCV: SHAP does not use the cross-validation models" in console_output
+        assert "[SHAP] Bar chart" in console_output
+        assert "[SHAP] Beeswarm" in console_output
 
 
 # ---------------------------------------------------------------------------
