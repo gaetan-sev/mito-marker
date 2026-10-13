@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mito-marker"
-version = "0.2.1"
+version = "0.3.0"
 description = "Mitochondria morphology biomarker analysis pipeline (TEM + SFC)"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -6,6 +6,11 @@ Install a release with `pip install git+https://github.com/gaetan-sev/mito-marke
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-13
+
+TEM cristae angle and grey-level columns excluded by default (ADR-018, **Breaking**);
+random rows for LOGO KernelExplainer SHAP, and a console explanation of every SHAP figure.
+
 ### Added
 - `refresh_tem_non_analytical_flags()` (exported from `mito_marker` and
   `mito_marker.tem`) re-stamps `.var['is_non_analytical']` on a TEM AnnData

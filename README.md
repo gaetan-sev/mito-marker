@@ -1061,7 +1061,7 @@ from google.colab import drive
 drive.mount("/content/drive")
 
 # Install a release tag (see CHANGELOG.md for the latest one)
-!pip install git+https://github.com/gaetan-sev/mito-marker.git@v0.2.1
+!pip install git+https://github.com/gaetan-sev/mito-marker.git@v0.3.0
 
 # SFC ingestion
 from mito_marker import ingest_sfc_folder
