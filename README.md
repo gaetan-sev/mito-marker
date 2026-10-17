@@ -805,7 +805,7 @@ def run_mil_logo_cv(
 ) -> dict
 ```
 
-Multiple Instance Learning (ABMIL — Attention-Based MIL) with Leave-One-Group-Out cross-validation. Works directly on per-mito feature vectors (no bagging). GPU-accelerated via PyTorch when available.
+Multiple Instance Learning (ABMIL — Attention-Based MIL) with Leave-One-Group-Out cross-validation. Works directly on per-mito feature vectors (no bagging). GPU-accelerated via PyTorch when available: an NVIDIA GPU (CUDA, e.g. Colab), or an Apple silicon GPU (MPS) on a Mac. `ml_config["mil_device"]` (default `"auto"`) can force `"cpu"`, `"cuda"` or `"mps"` (ADR-019).
 
 Additional functions: `get_mil_attention_dataframe` (per-mito attention weights), `plot_mil_attention` (attention heatmap).
 

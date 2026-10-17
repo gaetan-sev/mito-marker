@@ -67,9 +67,83 @@ if TYPE_CHECKING:
     # Annotations only: torch stays an optional runtime dependency.
     import torch
 
+# Accepted values for ml_config["mil_device"] (ADR-019).
+ALLOWED_MIL_DEVICES = ("auto", "cpu", "cuda", "mps")
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _select_torch_device(requested_device: str = "auto") -> "torch.device":
+    """
+    Return the torch device that trains and runs the MIL model (ADR-019).
+
+    "auto" picks the fastest device available: an NVIDIA GPU (CUDA, e.g. a Colab
+    GPU runtime), then an Apple silicon GPU (MPS, e.g. a MacBook), then the CPU.
+    "cpu", "cuda" and "mps" force one device.
+
+    A GPU gives the same results as the CPU up to floating-point rounding, not
+    bit for bit: force "cpu" to reproduce a CPU run exactly.
+
+    Arguments:
+        requested_device: One of ALLOWED_MIL_DEVICES (ml_config["mil_device"]).
+
+    Returns:
+        torch.device to move the model and the bag tensors to.
+
+    Raises:
+        ValueError: requested_device is not in ALLOWED_MIL_DEVICES, or names a GPU
+                    that is not available on this machine.
+    """
+    import torch
+
+    if requested_device not in ALLOWED_MIL_DEVICES:
+        raise ValueError(
+            f"mil_device must be one of {ALLOWED_MIL_DEVICES}, got {requested_device!r}."
+        )
+
+    cuda_available = torch.cuda.is_available()
+    mps_available = torch.backends.mps.is_available()
+
+    if requested_device == "auto":
+        if cuda_available:
+            return torch.device("cuda")
+        if mps_available:
+            return torch.device("mps")
+        return torch.device("cpu")
+
+    if requested_device == "cuda" and not cuda_available:
+        raise ValueError(
+            "mil_device='cuda' but no NVIDIA GPU is available. "
+            "Use mil_device='auto' to fall back to the fastest available device."
+        )
+    if requested_device == "mps" and not mps_available:
+        raise ValueError(
+            "mil_device='mps' but no Apple silicon GPU is available "
+            "(torch.backends.mps.is_available() is False). "
+            "Use mil_device='auto' to fall back to the fastest available device."
+        )
+    return torch.device(requested_device)
+
+
+def _describe_torch_device(device: "torch.device") -> str:
+    """
+    Return a one-line, human-readable name for the compute device of the MIL model.
+
+    Arguments:
+        device: Device returned by _select_torch_device().
+
+    Returns:
+        e.g. "GPU — Tesla T4", "GPU — Apple silicon (MPS)" or "CPU (...)".
+    """
+    import torch
+
+    if device.type == "cuda":
+        return f"GPU — {torch.cuda.get_device_name(0)}"
+    if device.type == "mps":
+        return "GPU — Apple silicon (MPS)"
+    return "CPU  (on Colab, set the runtime to GPU for faster training)"
 
 
 def _sort_class_names_numerically(class_names: List[str]) -> List[str]:
@@ -260,8 +334,8 @@ def train_mil_model(
         dropout=dropout,
     )
 
-    # Use GPU when available — significant speedup on Colab / cloud instances.
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # GPU when available (CUDA on Colab, MPS on a Mac): large speedup per epoch.
+    device = _select_torch_device(str(ml_config.get("mil_device", "auto")))
     model = model.to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
@@ -465,12 +539,10 @@ def run_mil_logo_cv(
                 "(mil_max_mitos_per_subject)."
             )
 
-    # Report compute device (detected from the first fold's model — printed once here).
-    if torch.cuda.is_available():
-        device_label = f"GPU — {torch.cuda.get_device_name(0)}"
-    else:
-        device_label = "CPU  (set Colab runtime to GPU for faster training)"
-    print(f"  MIL: compute device — {device_label}")
+    # Report the compute device once, before the fold loop. Resolving it here also
+    # stops early on an invalid or unavailable mil_device, before any training.
+    mil_device = _select_torch_device(str(ml_config.get("mil_device", "auto")))
+    print(f"  MIL: compute device — {_describe_torch_device(mil_device)}")
 
     # Fit the label encoder on all available labels before the fold loop
     if task_type == "classification":

@@ -7,6 +7,11 @@ All tests in this file require PyTorch (torch>=2.0). If torch is not installed,
 the entire module is skipped gracefully via pytest.importorskip at the top.
 
 Covers:
+  _select_torch_device() / _describe_torch_device() (ADR-019):
+    - "auto" picks CUDA, then MPS, then CPU; "cpu" is honoured even with a GPU.
+    - ValueError for an unknown or unavailable device, raised by run_mil_logo_cv()
+      before any training.
+
   _build_attention_mil_model():
     - Returns an nn.Module instance.
     - Forward pass produces logits (1, n_classes) and attention weights (n_instances,).
@@ -54,6 +59,8 @@ torch = pytest.importorskip("torch")
 
 from mito_marker.analysis.ml_mil import (
     _build_attention_mil_model,
+    _describe_torch_device,
+    _select_torch_device,
     get_mil_attention_dataframe,
     plot_mil_attention,
     run_mil_logo_cv,
@@ -178,7 +185,70 @@ def _make_minimal_ml_config(
         "mil_max_epochs":     mil_max_epochs,
         "mil_patience":       mil_patience,
         "mil_min_mitos":      5,
+        # CPU in every test: identical results on CI, Colab and a Mac with MPS,
+        # and test tensors built on the CPU match the model's device.
+        "mil_device":         "cpu",
     }
+
+
+# ---------------------------------------------------------------------------
+# Tests: _select_torch_device / _describe_torch_device (ADR-019)
+# ---------------------------------------------------------------------------
+
+
+class TestSelectTorchDevice:
+    """Tests for the compute device choice: CUDA, then MPS, then CPU."""
+
+    def test_auto_prefers_cuda(self, monkeypatch):
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+        assert _select_torch_device("auto").type == "cuda"
+
+    def test_auto_uses_mps_without_cuda(self, monkeypatch):
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+        assert _select_torch_device("auto").type == "mps"
+
+    def test_auto_falls_back_to_cpu(self, monkeypatch):
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+        assert _select_torch_device("auto").type == "cpu"
+
+    def test_cpu_forced_even_when_gpu_available(self, monkeypatch):
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+        assert _select_torch_device("cpu").type == "cpu"
+
+    def test_unavailable_mps_raises(self, monkeypatch):
+        monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+        with pytest.raises(ValueError, match="mps"):
+            _select_torch_device("mps")
+
+    def test_unavailable_cuda_raises(self, monkeypatch):
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        with pytest.raises(ValueError, match="cuda"):
+            _select_torch_device("cuda")
+
+    def test_unknown_device_raises(self):
+        with pytest.raises(ValueError, match="mil_device must be one of"):
+            _select_torch_device("gpu")
+
+    def test_run_mil_logo_cv_rejects_unknown_device_before_training(self):
+        adata = _make_mil_anndata(n_subjects=4, mitos_per_subject=20, n_features=5)
+        config = _make_minimal_ml_config()
+        config["mil_device"] = "gpu"
+        with pytest.raises(ValueError, match="mil_device must be one of"):
+            run_mil_logo_cv(
+                data_matrix=adata.X.copy(),
+                obs_dataframe=adata.obs,
+                ml_config=config,
+                feature_names=list(adata.var_names),
+                label_encoder=LabelEncoder(),
+            )
+
+    def test_describe_device(self):
+        assert "MPS" in _describe_torch_device(torch.device("mps"))
+        assert _describe_torch_device(torch.device("cpu")).startswith("CPU")
 
 
 # ---------------------------------------------------------------------------

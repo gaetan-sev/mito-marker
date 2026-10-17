@@ -6,6 +6,16 @@ Install a release with `pip install git+https://github.com/gaetan-sev/mito-marke
 
 ## [Unreleased]
 
+### Added
+- `ml_config["mil_device"]` (default `"auto"`): compute device of the MIL model.
+  `"auto"` picks an NVIDIA GPU (CUDA), then an Apple silicon GPU (MPS), then the CPU;
+  `"cpu"`, `"cuda"` and `"mps"` force one device (ADR-019).
+
+### Changed
+- MIL training now uses the Apple silicon GPU (MPS) on a Mac. Results can differ from
+  a CPU run in the last decimals; set `mil_device="cpu"` to reproduce a CPU result
+  exactly (ADR-019).
+
 ## [0.3.0] — 2026-10-13
 
 TEM cristae angle and grey-level columns excluded by default (ADR-018, **Breaking**);

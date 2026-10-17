@@ -909,6 +909,44 @@ experiments and were excluded by hand, experiment by experiment:
 
 ---
 
+## ADR-019 — MIL compute device: CUDA, then Apple silicon (MPS), then CPU
+
+**Date**: 2026-10-17
+**Status**: accepted
+
+**Context**: the MIL model used an NVIDIA GPU (CUDA) when one was available and
+the CPU otherwise. The research now also runs on a MacBook with an Apple silicon
+GPU, which PyTorch reaches through the MPS backend. With the old rule, every MIL
+run on the Mac stayed on the CPU. A GPU also gives results equal to the CPU only
+up to floating-point rounding, which matters when a lab experiment is rerun to
+check that it reproduces an earlier result.
+
+**Decision**:
+
+- New key `ml_config["mil_device"]`, default `"auto"`, allowed values in
+  `ml_mil.ALLOWED_MIL_DEVICES`: `"auto"`, `"cpu"`, `"cuda"`, `"mps"`.
+- `"auto"` picks CUDA, then MPS, then the CPU. The other values force one
+  device; forcing a GPU that is not available raises a `ValueError` before any
+  training.
+- `run_mil_logo_cv()` prints the device it uses, as before, now including MPS.
+- The test suite forces `"cpu"`, so the tests give the same results on CI,
+  Colab and a Mac.
+
+**Alternatives considered**:
+
+- Detect MPS without a config key: rejected, because a rerun would then have no
+  way to reproduce a CPU result exactly on a Mac.
+- An environment variable instead of a config key: rejected, because the device
+  would not be recorded with the rest of the `ml_config`.
+
+**Consequences**:
+
+- MIL training uses the Mac GPU by default. Its results can differ from a CPU run
+  in the last decimals; set `mil_device="cpu"` to compare with a CPU result.
+- Colab and CI behave as before: CUDA when available, otherwise the CPU.
+
+---
+
 ## ADR-NNN — Template for future entries
 
 Copy and fill in for each new decision:

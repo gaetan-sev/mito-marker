@@ -275,6 +275,9 @@ def get_default_ml_config() -> dict:
         # None = use all mitos; int = subsample each bag for speed.
         # Recommended: 500–1000 for SFC (reduces forward-pass time proportionally).
         "mil_max_mitos_per_subject": None,
+        # Compute device (ADR-019): "auto" = NVIDIA GPU, then Apple silicon GPU,
+        # then CPU. Force "cpu" to reproduce a CPU run bit for bit.
+        "mil_device":         "auto",
     }
 
 
@@ -646,6 +649,7 @@ def configure_ml(anndata_object: anndata.AnnData) -> dict:
         "mil_patience":       mil_patience,
         "mil_min_mitos":      5,
         "mil_max_mitos_per_subject": None,
+        "mil_device":         "auto",
     }
 
     _validate_ml_config(ml_config)
