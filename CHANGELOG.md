@@ -6,6 +6,13 @@ Install a release with `pip install git+https://github.com/gaetan-sev/mito-marke
 
 ## [Unreleased]
 
+### Fixed
+- `run_mil_logo_cv()`: the training seed of each fold no longer depends on
+  Python's `hash()`, which changes from one process to the next. Two runs of
+  the same MIL configuration now train the same models and give the same
+  results. Results differ from those of earlier versions, which could not be
+  reproduced anyway.
+
 ## [0.3.0] — 2026-10-13
 
 TEM cristae angle and grey-level columns excluded by default (ADR-018, **Breaking**);

@@ -55,6 +55,7 @@ Typical usage:
 
 import copy
 import warnings
+import zlib
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import anndata
@@ -78,6 +79,25 @@ def _sort_class_names_numerically(class_names: List[str]) -> List[str]:
         return sorted(class_names, key=lambda x: float(x))
     except (ValueError, TypeError):
         return sorted(class_names)
+
+
+def _fold_seed(random_state: int, fold_label: str) -> int:
+    """
+    Derive a reproducible training seed for one LOGO / LAVO fold.
+
+    Python's built-in hash() of a string changes from one process to the next
+    (PYTHONHASHSEED randomisation), so seeds derived from it made two runs of the
+    same script train different models. CRC32 of the label's UTF-8 bytes is
+    identical in every process and on every machine.
+
+    Arguments:
+        random_state: Master seed from ml_config["random_state"].
+        fold_label:   Fold identifier (subject ID for LOGO, group value for LAVO).
+
+    Returns:
+        Integer seed in [0, 2**31), the range accepted by torch.manual_seed.
+    """
+    return (int(random_state) + zlib.crc32(str(fold_label).encode("utf-8"))) % (2 ** 31)
 
 
 # ---------------------------------------------------------------------------
@@ -542,9 +562,8 @@ def run_mil_logo_cv(
             s: v for s, v in bags_dict_encoded.items() if s not in test_subjects_set
         }
 
-        # Use a fold-specific but deterministic seed so folds are independent.
-        # Use modular arithmetic to stay within int32 range for torch.manual_seed.
-        fold_seed = (random_state + abs(hash(fold_label))) % (2 ** 31)
+        # Fold-specific seed, identical in every process (see _fold_seed).
+        fold_seed = _fold_seed(random_state, fold_label)
         fold_model = train_mil_model(
             bags_dict=train_bags,
             ml_config=ml_config,

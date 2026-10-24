@@ -27,6 +27,12 @@ Covers:
     - ValueError when fewer than 2 subjects pass the min_mitos filter.
     - UserWarning when a subject has fewer mitos than mil_min_mitos.
 
+  _fold_seed():
+    - Same value in processes with different PYTHONHASHSEED values.
+    - Seed in [0, 2**31); different labels give different seeds.
+    - run_mil_logo_cv() gives identical predictions in two processes with
+      different PYTHONHASHSEED values.
+
   get_mil_attention_dataframe():
     - Returns a DataFrame with the expected columns.
     - One row per mitochondrion (across all test subjects).
@@ -41,6 +47,11 @@ Covers:
     - UserWarning emitted when evaluation_strategy="StandardCV" is used with MIL.
 """
 
+import json
+import os
+import subprocess
+import sys
+import textwrap
 import warnings
 
 import anndata
@@ -54,6 +65,7 @@ torch = pytest.importorskip("torch")
 
 from mito_marker.analysis.ml_mil import (
     _build_attention_mil_model,
+    _fold_seed,
     get_mil_attention_dataframe,
     plot_mil_attention,
     run_mil_logo_cv,
@@ -543,6 +555,70 @@ class TestRunMilLogoCv:
                 f"Subject '{subj_id}': expected ({max_mitos},) after subsampling, "
                 f"got {weights.shape}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Tests: _fold_seed (reproducibility across processes)
+# ---------------------------------------------------------------------------
+
+
+def _run_in_fresh_process(script: str, python_hash_seed: str) -> str:
+    """Run a Python snippet in a new interpreter with a given PYTHONHASHSEED; return its stdout."""
+    environment = dict(os.environ, PYTHONHASHSEED=python_hash_seed)
+    completed = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(script)],
+        capture_output=True, text=True, env=environment, check=True,
+    )
+    return completed.stdout.strip().splitlines()[-1]
+
+
+class TestFoldSeed:
+    """The fold seed must not depend on Python's per-process string hashing."""
+
+    def test_same_seed_in_processes_with_different_hash_seeds(self):
+        script = """
+            from mito_marker.analysis.ml_mil import _fold_seed
+            print(_fold_seed(42, "Worm_04"))
+        """
+        seeds = {_run_in_fresh_process(script, hash_seed) for hash_seed in ("0", "1", "12345")}
+        assert len(seeds) == 1
+        assert int(seeds.pop()) == _fold_seed(42, "Worm_04")
+
+    def test_seed_in_torch_range_and_label_specific(self):
+        labels = [f"subject_{index}" for index in range(50)]
+        seeds = [_fold_seed(42, label) for label in labels]
+        assert all(0 <= seed < 2 ** 31 for seed in seeds)
+        assert len(set(seeds)) == len(seeds)
+
+    def test_run_mil_logo_cv_identical_across_processes(self):
+        script = """
+            import json, warnings
+            import numpy as np, pandas as pd
+            from sklearn.preprocessing import LabelEncoder
+            from mito_marker.analysis.ml_mil import run_mil_logo_cv
+            warnings.simplefilter("ignore")
+            rng = np.random.default_rng(0)
+            subjects = [f"S{index}" for index in range(4) for _ in range(15)]
+            obs = pd.DataFrame({
+                "unique_subject_ID": subjects,
+                "condition": ["Young" if int(s[1]) < 2 else "Old" for s in subjects],
+            })
+            config = {
+                "task_type": "classification", "target_obs_column": "condition",
+                "subject_id_column": "unique_subject_ID", "random_state": 42,
+                "mil_encoder_dim": 8, "mil_attention_dim": 4, "mil_dropout": 0.1,
+                "mil_max_epochs": 3, "mil_patience": 2, "mil_min_mitos": 5,
+            }
+            result = run_mil_logo_cv(
+                data_matrix=rng.normal(size=(len(subjects), 4)).astype(np.float32),
+                obs_dataframe=obs, ml_config=config,
+                feature_names=["f0", "f1", "f2", "f3"], label_encoder=LabelEncoder(),
+            )
+            print(json.dumps(np.round(result["roc_y_pred_proba"], 6).tolist()))
+        """
+        outputs = {_run_in_fresh_process(script, hash_seed) for hash_seed in ("0", "7")}
+        assert len(outputs) == 1, "run_mil_logo_cv() predictions depend on PYTHONHASHSEED"
+        assert len(json.loads(outputs.pop())) == 4
 
 
 # ---------------------------------------------------------------------------
