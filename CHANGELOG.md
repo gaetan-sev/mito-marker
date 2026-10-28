@@ -6,6 +6,12 @@ Install a release with `pip install git+https://github.com/gaetan-sev/mito-marke
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-28
+
+SFC experimental conditions (products added to the tube, waiting times) read
+from the filename, with products declared in the notebook (ADR-019); unknown
+filename words now raise a warning instead of being ignored.
+
 ### Added
 - SFC experimental conditions read from the filename (ADR-019): products added
   to the tube one after another, and the waiting time before acquisition.
