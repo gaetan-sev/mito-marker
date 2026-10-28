@@ -12,6 +12,8 @@ Tests verify:
   - .obs fields are populated from the filename (subject_ID, specie, marker, FlowAI_Pass).
   - .X has the correct shape, dtype, and no NaN or Inf values.
   - Error handling (missing directory, empty directory) raises the expected exceptions.
+  - condition_tokens: products declared in the notebook become .obs columns, are
+    saved in the .h5ad, and are kept when new files are appended (ADR-019).
 """
 
 import os
@@ -20,9 +22,8 @@ import anndata
 import numpy as np
 import pytest
 
-from mito_marker.controlled_vocabulary import SFC_CHANNELS_TO_KEEP
+from mito_marker.controlled_vocabulary import SFC_CHANNELS_TO_KEEP, SFC_CONDITION_TOKENS_UNS_KEY
 from mito_marker.sfc.ingestion import ingest_sfc_folder
-
 
 # ---------------------------------------------------------------------------
 # Mock stub
@@ -281,6 +282,97 @@ class TestAppendDeduplicationMock:
             f"Expected event count to remain {first_n_obs} when all files are "
             f"already ingested, but got {third_result.n_obs}."
         )
+
+
+class TestConditionTokensMock:
+    """
+    Products declared with condition_tokens (ADR-019) flow from the filenames to
+    .obs, are saved in the .h5ad, and survive append mode, where anndata.concat()
+    drops .uns.
+    """
+
+    _PRODUCT_TOKENS = {"PGM": "Pyruvate + glutamate + malate", "ADP": "Adenosine diphosphate"}
+    _FILENAMES = [
+        "export_WORM_001_D08_AL_DR_FlowAIGoodEvents_DR+.fcs",
+        "export_WORM_001_D08_AL_PGM_DR_FlowAIGoodEvents_DR+.fcs",
+        "export_WORM_001_D08_AL_PGM_ADP_1min_DR_FlowAIGoodEvents_DR+.fcs",
+        "export_WORM_001_D08_AL_PGM_ADP_30min_DR_FlowAIGoodEvents_DR+.fcs",
+    ]
+
+    @pytest.fixture
+    def protocol_directory(self, tmp_path, monkeypatch):
+        fcs_dir = tmp_path / "fcs"
+        fcs_dir.mkdir()
+        for filename in self._FILENAMES:
+            (fcs_dir / filename).write_bytes(b"")
+        monkeypatch.setattr("mito_marker.sfc.ingestion.load_fcs_file", _mock_load_fcs_file)
+        return {"fcs_dir": str(fcs_dir), "output_path": str(tmp_path / "output.h5ad")}
+
+    def test_conditions_in_obs(self, protocol_directory):
+        result = ingest_sfc_folder(
+            data_directory_path=protocol_directory["fcs_dir"],
+            output_file_path=protocol_directory["output_path"],
+            condition_tokens=self._PRODUCT_TOKENS,
+        )
+        assert list(result.obs["condition"].cat.categories) == [
+            "No_addition", "PGM", "PGM_ADP_1min", "PGM_ADP_30min",
+        ]
+        assert (result.obs["condition"].value_counts() == _MOCK_N_EVENTS).all()
+        assert result.obs["with_ADP"].sum() == 2 * _MOCK_N_EVENTS
+
+    def test_tokens_saved_in_h5ad(self, protocol_directory):
+        ingest_sfc_folder(
+            data_directory_path=protocol_directory["fcs_dir"],
+            output_file_path=protocol_directory["output_path"],
+            condition_tokens=self._PRODUCT_TOKENS,
+        )
+        reloaded = anndata.read_h5ad(protocol_directory["output_path"])
+        assert dict(reloaded.uns[SFC_CONDITION_TOKENS_UNS_KEY]) == self._PRODUCT_TOKENS
+        assert "condition" in reloaded.obs.columns
+
+    def test_without_tokens_undeclared_products_warn(self, protocol_directory):
+        with pytest.warns(UserWarning, match="condition_tokens"):
+            result = ingest_sfc_folder(
+                data_directory_path=protocol_directory["fcs_dir"],
+                output_file_path=protocol_directory["output_path"],
+            )
+        assert (result.obs["condition"] == "No_addition").all()
+
+    def test_append_keeps_saved_tokens(self, protocol_directory):
+        """Second run declares nothing: the products saved in the file still apply."""
+        fcs_dir = protocol_directory["fcs_dir"]
+        output_path = protocol_directory["output_path"]
+        last_file = os.path.join(fcs_dir, self._FILENAMES[-1])
+        os.rename(last_file, last_file + ".hidden")
+        ingest_sfc_folder(
+            data_directory_path=fcs_dir,
+            output_file_path=output_path,
+            condition_tokens=self._PRODUCT_TOKENS,
+        )
+        os.rename(last_file + ".hidden", last_file)
+
+        result = ingest_sfc_folder(
+            data_directory_path=fcs_dir,
+            output_file_path=output_path,
+            append_to_existing=True,
+        )
+        assert result.n_obs == 4 * _MOCK_N_EVENTS
+        assert result.uns[SFC_CONDITION_TOKENS_UNS_KEY] == self._PRODUCT_TOKENS
+        assert list(result.obs["condition"].cat.categories) == [
+            "No_addition", "PGM", "PGM_ADP_1min", "PGM_ADP_30min",
+        ]
+
+    def test_invalid_tokens_raise_before_reading_files(self, protocol_directory, monkeypatch):
+        def fail_if_called(*arguments, **keyword_arguments):
+            raise AssertionError("load_fcs_file must not be called")
+
+        monkeypatch.setattr("mito_marker.sfc.ingestion.load_fcs_file", fail_if_called)
+        with pytest.raises(ValueError, match="already has a meaning"):
+            ingest_sfc_folder(
+                data_directory_path=protocol_directory["fcs_dir"],
+                output_file_path=protocol_directory["output_path"],
+                condition_tokens={"AL": "Ad libitum"},
+            )
 
 
 class TestErrorHandlingMock:

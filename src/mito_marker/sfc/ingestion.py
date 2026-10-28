@@ -8,7 +8,8 @@ This module contains the single public function that end users call from a noteb
 
 It discovers all .fcs files in a directory, processes each one through the full
 pipeline (filename parsing → FCS loading → AnnData construction → QC), concatenates
-the per-file AnnData objects into a single combined dataset, and saves the result
+the per-file AnnData objects into a single combined dataset, adds the experimental
+condition of every event (products added to the tube, ADR-019), and saves the result
 as an .h5ad file. It also supports an append mode that extends an existing .h5ad
 file with new events, with strict channel-compatibility checking.
 """
@@ -20,10 +21,14 @@ from typing import List, Optional
 import anndata
 from flowio.exceptions import FlowIOException
 
-from mito_marker.controlled_vocabulary import SFC_CHANNELS_TO_EXCLUDE
+from mito_marker.controlled_vocabulary import (
+    SFC_CHANNELS_TO_EXCLUDE,
+    SFC_CONDITION_TOKENS_UNS_KEY,
+)
 from mito_marker.sfc.anndata_builder import build_sfc_anndata
+from mito_marker.sfc.conditions import annotate_sfc_conditions
 from mito_marker.sfc.fcs_loader import load_fcs_file
-from mito_marker.sfc.filename_parser import parse_fcs_filename
+from mito_marker.sfc.filename_parser import _validate_condition_tokens, parse_fcs_filename
 from mito_marker.sfc.qc import (
     print_anndata_qc,
     print_append_summary,
@@ -38,6 +43,7 @@ def ingest_sfc_folder(
     output_file_path: str,
     channels_to_exclude: Optional[List[str]] = None,
     append_to_existing: bool = False,
+    condition_tokens: Optional[dict[str, str]] = None,
 ) -> anndata.AnnData:
     """
     Ingest all .fcs files in a directory into a single AnnData object and save as .h5ad.
@@ -45,7 +51,8 @@ def ingest_sfc_folder(
     This is the primary public entry point for the SFC pipeline. For each .fcs file
     found in data_directory_path, it: parses the filename to extract .obs metadata,
     loads the event matrix with FlowIO, builds a per-file AnnData, then concatenates
-    all per-file objects into one combined dataset.
+    all per-file objects into one combined dataset. Finally, annotate_sfc_conditions()
+    reads the products added to each tube from its filename (ADR-019).
 
     If append_to_existing=True and the output file already exists, the existing .h5ad
     is loaded first and new events are appended after verifying that channel names
@@ -65,6 +72,17 @@ def ingest_sfc_folder(
                             concatenate new events to it. Raises ValueError if the channel
                             names in the new files do not exactly match the existing .var.
                             If the output file does not exist, behaves like False.
+                            The products saved in the existing file are kept, and
+                            every event (old and new) is annotated again.
+        condition_tokens: Products added to the tubes, declared in the notebook as
+                          {token as written in filenames: description}, e.g.
+                          {"PGM": "Pyruvate + glutamate + malate",
+                           "ADP": "Adenosine diphosphate"}. Filenames list every
+                          product in the tube in order of addition, with the waiting
+                          time right after its product: WORM_001_D08_AL_PGM_ADP_30min_DR.
+                          None declares no product: every tube is 'No_addition'.
+                          Unrecognised filename words trigger a warning that shows
+                          how to declare them.
 
     Returns:
         The combined anndata.AnnData object (same data as saved to output_file_path).
@@ -74,6 +92,11 @@ def ingest_sfc_folder(
         ValueError: If no .fcs files are found in data_directory_path, or if
                     channel names mismatch when appending to an existing .h5ad.
     """
+    # Check the declared products first: a mistake there should not cost a full read
+    # of every .fcs file before being reported.
+    if condition_tokens is not None:
+        _validate_condition_tokens(condition_tokens)
+
     # SFC_CHANNELS_TO_EXCLUDE (FJComp-* channels and other non-informative columns) are always dropped.
     # Any caller-supplied list is applied on top.
     effective_channels_to_exclude: List[str] = list(
@@ -88,6 +111,7 @@ def ingest_sfc_folder(
     else:
         print("Additional exclusions    : none")
     print(f"Append to existing       : {append_to_existing}")
+    print(f"Declared products        : {sorted(condition_tokens) if condition_tokens else 'none'}")
     print(f"Output file              : {output_file_path}")
 
     # STEP 1 — Discover FCS files
@@ -101,6 +125,9 @@ def ingest_sfc_folder(
     anndata_objects_to_combine: List[anndata.AnnData] = []
     existing_n_obs = 0
     already_ingested_filenames: set = set()
+    # anndata.concat() drops .uns, so the products saved in the existing file are
+    # read here and passed to annotate_sfc_conditions() after concatenation.
+    previously_declared_tokens: dict[str, str] = {}
 
     if append_to_existing and os.path.exists(output_file_path):
         print(f"\nAppend mode: loading existing .h5ad from {output_file_path}")
@@ -119,6 +146,14 @@ def ingest_sfc_folder(
             f"Already ingested source files: {len(already_ingested_filenames)} "
             f"— duplicates will be skipped."
         )
+        previously_declared_tokens = {
+            str(token): str(description)
+            for token, description in dict(
+                existing_sfc_anndata.uns.get(SFC_CONDITION_TOKENS_UNS_KEY, {})
+            ).items()
+        }
+        if previously_declared_tokens:
+            print(f"Products saved in the existing file: {sorted(previously_declared_tokens)}")
         anndata_objects_to_combine.append(existing_sfc_anndata)
     elif append_to_existing and not os.path.exists(output_file_path):
         print(
@@ -172,6 +207,14 @@ def ingest_sfc_folder(
     print(
         f"Combined AnnData: {combined_sfc_anndata.n_obs:,} events × "
         f"{combined_sfc_anndata.n_vars} channels"
+    )
+
+    # STEP 4b — Experimental condition of every event, read from source_filename.
+    # Done on the combined object so that, in append mode, old events are annotated
+    # with the same products as new ones.
+    combined_sfc_anndata = annotate_sfc_conditions(
+        combined_sfc_anndata,
+        condition_tokens={**previously_declared_tokens, **(condition_tokens or {})},
     )
 
     # Log append summary if we added to existing data

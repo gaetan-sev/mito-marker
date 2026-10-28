@@ -80,6 +80,7 @@ mito-marker/
 │       │   ├── fcs_loader.py             # load_fcs_file()
 │       │   ├── anndata_builder.py        # build_sfc_anndata()
 │       │   ├── clinical_data.py          # enrich_with_clinical_data()
+│       │   ├── conditions.py             # annotate_sfc_conditions() — products added to the tube (ADR-019)
 │       │   └── qc.py                     # QC printing functions
 │       └── analysis/                     # Shared downstream analysis
 │           ├── preprocessing_config.py   # configure_preprocessing(), get_default_preprocessing_config()

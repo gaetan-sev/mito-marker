@@ -150,7 +150,7 @@ from mito_marker.analysis import (
     validate_mhi_with_chimeras,
 )
 from mito_marker.inspector import inspect_anndata
-from mito_marker.sfc import enrich_with_clinical_data, ingest_sfc_folder
+from mito_marker.sfc import annotate_sfc_conditions, enrich_with_clinical_data, ingest_sfc_folder
 from mito_marker.tem import ingest_tem_folder, refresh_tem_non_analytical_flags
 
 __all__ = [
@@ -160,6 +160,7 @@ __all__ = [
     # SFC ingestion
     "ingest_sfc_folder",
     "enrich_with_clinical_data",
+    "annotate_sfc_conditions",
     # Inspector
     "inspect_anndata",
     # Step 1 — subset selection
