@@ -593,7 +593,67 @@ SFC_MARKER_JOIN_ORDER: list[str] = ["TMRM", "MtDeepRed", "Not_Marked"]
 
 # Filename tokens whose presence indicates that FlowAI quality control passed.
 # FlowAI_Pass is set to True if any of these tokens appears in the filename tokens.
-FLOWAI_PASS_TOKENS: set[str] = {"good", "events", "FlowAIGoodEvents"}
+FLOWAI_PASS_TOKENS: set[str] = {"good", "events", "goodevents", "FlowAIGoodEvents"}
+
+# Filename tokens that carry no sample metadata: export prefixes, FlowJo gate
+# names, repeat-tube tags. They are skipped silently. Any other token that no
+# rule recognises triggers a warning (see annotate_sfc_conditions()).
+SFC_FILENAME_TOKENS_WITHOUT_METADATA: dict[str, str] = {
+    "export": "Prefix added by FlowJo when a population is exported",
+    "expor": "Truncated 'export' prefix found in some MNMS filenames",
+    "DR+": "FlowJo gate name — MitoTracker Deep Red positive events",
+    "P1": "FlowJo gate name — default name of the first gate",
+    "bis": "Second acquisition of the same tube",
+    "BIS": "Second acquisition of the same tube",
+}
+
+# ---------------------------------------------------------------------------
+# SFC PIPELINE — experimental conditions: products added to the tube (ADR-019)
+#
+# Some protocols add products to the same sample one after the other (e.g. the
+# substrates PGM, then ADP) and wait a given time before each acquisition.
+# Each filename lists every product present in the tube, in order of addition,
+# with the waiting time right after the product it refers to:
+#     WORM_001_D08_AL_PGM_ADP_30min_DR
+#
+# The products themselves are NOT listed here: they are declared in the
+# notebook, ingest_sfc_folder(..., condition_tokens={"PGM": "...", ...}), so a
+# new product needs no change to the package. Only the fixed rules live here.
+# ---------------------------------------------------------------------------
+
+# A declared product token starts with a letter and holds only letters, digits,
+# '+' or '-'. '_' is forbidden: it separates the tokens of a filename.
+SFC_PRODUCT_TOKEN_PATTERN: str = r"[A-Za-z][A-Za-z0-9+-]*"
+
+# A waiting time is a whole number glued to its unit: "1min", "30min", "90s",
+# "2h" (unit case ignored). It refers to the product written just before it.
+SFC_ADDITION_TIME_TOKEN_PATTERN: str = r"(\d+)(s|min|h)"
+
+# Minutes per time unit: every waiting time is stored in minutes.
+SFC_ADDITION_TIME_UNIT_TO_MINUTES: dict[str, float] = {
+    "s": 1 / 60,
+    "min": 1.0,
+    "h": 60.0,
+}
+
+# .obs columns written by annotate_sfc_conditions().
+SFC_CONDITION_OBS_FIELDS: dict[str, str] = {
+    "condition": "Products in the tube in order of addition, with waiting times "
+                 "(e.g. 'PGM_ADP_30min'); 'No_addition' when no product is declared",
+    "number_of_additions": "Number of product additions written in the filename",
+    "minutes_after_last_addition": "Waiting time after the last product, in minutes "
+                                   "(NaN when no time follows the last product)",
+}
+
+# .obs["condition"] value of a tube whose filename holds no declared product.
+SFC_CONDITION_WITHOUT_ADDITION: str = "No_addition"
+
+# One boolean .obs column per declared product: "with_<product>" (e.g. "with_ADP").
+SFC_PRODUCT_PRESENCE_OBS_COLUMN_PREFIX: str = "with_"
+
+# .uns key where the declared products are saved with the dataset, so that a
+# .h5ad file records what each product token means.
+SFC_CONDITION_TOKENS_UNS_KEY: str = "sfc_condition_tokens"
 
 # ---------------------------------------------------------------------------
 # SFC PIPELINE — cytometry channel lists (Cytek Aurora 5-laser instrument)
@@ -911,6 +971,17 @@ NUMERICAL_OBS_BOUNDS: dict[str, dict[str, float | str]] = {
         "unit": "kilo",
         "min": 0,
         "max": 200,
+    },
+    # SFC conditions (ADR-019): waiting time after the last product added.
+    "minutes_after_last_addition": {
+        "unit": "minutes",
+        "min": 0,
+        "max": 1440,
+    },
+    "number_of_additions": {
+        "unit": "additions",
+        "min": 0,
+        "max": 20,
     },
 }
 

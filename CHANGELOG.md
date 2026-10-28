@@ -6,6 +6,40 @@ Install a release with `pip install git+https://github.com/gaetan-sev/mito-marke
 
 ## [Unreleased]
 
+### Added
+- SFC experimental conditions read from the filename (ADR-019): products added
+  to the tube one after another, and the waiting time before acquisition.
+  Name each tube with every product present, in order of addition, and the
+  waiting time right after its product: `WORM_001_D08_AL_PGM_ADP_30min_DR`.
+  - `ingest_sfc_folder(..., condition_tokens={"PGM": "...", "ADP": "..."})`:
+    the products are declared in the notebook, so a new product needs no
+    change to the package.
+  - New `.obs` columns: `condition` (e.g. `PGM_ADP_30min`, `No_addition` when
+    no product; categories in protocol order), `number_of_additions`,
+    `minutes_after_last_addition`, and one `with_<product>` column per product.
+    The declared products are saved in `.uns["sfc_condition_tokens"]`.
+  - `annotate_sfc_conditions()` (exported from `mito_marker` and
+    `mito_marker.sfc`) does the same on an AnnData already loaded, without
+    reading the `.fcs` files again.
+  - In append mode, the products saved in the existing `.h5ad` are kept and
+    every event, old and new, is annotated again.
+  - `controlled_vocabulary.py`: `SFC_FILENAME_TOKENS_WITHOUT_METADATA`,
+    `SFC_PRODUCT_TOKEN_PATTERN`, `SFC_ADDITION_TIME_TOKEN_PATTERN`,
+    `SFC_ADDITION_TIME_UNIT_TO_MINUTES`, `SFC_CONDITION_OBS_FIELDS`,
+    `SFC_CONDITION_WITHOUT_ADDITION`, `SFC_PRODUCT_PRESENCE_OBS_COLUMN_PREFIX`,
+    `SFC_CONDITION_TOKENS_UNS_KEY`, and bounds for the two numerical columns.
+
+### Changed
+- A word of an SFC filename that no rule recognises is no longer ignored
+  silently: `UnrecognisedFilenameTokenWarning` (a `UserWarning`) lists it with
+  an example file and shows how to declare a product. The words FlowJo adds
+  (`export`, `expor`, `DR+`, `P1`, `bis`, `BIS`) stay silent. None of the 889
+  filenames ingested so far triggers the warning.
+
+### Fixed
+- `goodevents` is recognised as a FlowAI tag. No effect on existing files,
+  which also carry `FlowAIGoodEvents`.
+
 ## [0.3.0] — 2026-10-13
 
 TEM cristae angle and grey-level columns excluded by default (ADR-018, **Breaking**);

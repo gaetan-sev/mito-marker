@@ -84,10 +84,15 @@ from mito_marker import (
     run_ml_analysis,
 )
 
-# Ingest a folder of .fcs files
+# Ingest a folder of .fcs files. condition_tokens declares the products added
+# to the tubes, as written in the filenames (optional, see section 6).
 spectral_cytometry_anndata = ingest_sfc_folder(
     data_directory_path="data/raw/sfc/",
     output_file_path="data/processed/sfc.h5ad",
+    condition_tokens={
+        "PGM": "Pyruvate + glutamate + malate (complex I substrates)",
+        "ADP": "Adenosine diphosphate",
+    },
 )
 
 # Explore the dataset interactively
@@ -182,6 +187,7 @@ mito-marker/
 │       │   ├── fcs_loader.py              # load_fcs_file() — reads .fcs binary with FlowIO
 │       │   ├── anndata_builder.py         # build_sfc_anndata() — assembles AnnData
 │       │   ├── clinical_data.py           # enrich_with_clinical_data() — links MNMS clinical CSV
+│       │   ├── conditions.py              # annotate_sfc_conditions() — products added to the tube (ADR-019)
 │       │   └── qc.py                      # QC printing functions (no data modification)
 │       │
 │       ├── tem/                           # TEM pipeline (fully implemented)
@@ -256,6 +262,7 @@ mito-marker/
 │   ├── test_sfc_ingestion.py
 │   ├── test_sfc_ingestion_mock.py
 │   ├── test_sfc_clinical_data.py
+│   ├── test_sfc_conditions.py
 │   ├── test_tem_filename_parser.py
 │   ├── test_tem_file_loader.py
 │   ├── test_tem_anndata_builder.py
@@ -353,10 +360,59 @@ def ingest_sfc_folder(
     output_file_path: str,
     channels_to_exclude: Optional[List[str]] = None,
     append_to_existing: bool = False,
+    condition_tokens: Optional[dict[str, str]] = None,
 ) -> anndata.AnnData
 ```
 
-Scans a folder of `.fcs` files, ingests each one, validates channel consistency across files, concatenates into a single AnnData, and saves to `.h5ad`.
+Scans a folder of `.fcs` files, ingests each one, validates channel consistency across files, concatenates into a single AnnData, adds the experimental condition of every event (see `conditions.py` below), and saves to `.h5ad`.
+
+---
+
+#### `conditions.py` — `annotate_sfc_conditions`
+
+```python
+def annotate_sfc_conditions(
+    spectral_cytometry_anndata: anndata.AnnData,
+    condition_tokens: Optional[dict[str, str]] = None,
+) -> anndata.AnnData
+```
+
+Reads, from each filename, the products added to the tube and the waiting time before acquisition (ADR-019). `ingest_sfc_folder()` calls it; call it yourself to declare a product on a `.h5ad` already ingested, without reading the `.fcs` files again.
+
+**Naming the tubes.** List every product present in the tube, in order of addition, and write each waiting time right after the product it refers to. One word per piece of information, separated by `_`, without spaces, accents, `-`, `.` or `/`. Always write a product the same way (`PGM`, never `pgm`). Keep the same 3-digit number for every tube of one sample: it links the steps together.
+
+| Tube name | `condition` | `number_of_additions` | `minutes_after_last_addition` | `with_PGM` | `with_ADP` |
+|---|---|---|---|---|---|
+| `WORM_001_D08_AL_DR` | `No_addition` | 0 | NaN | False | False |
+| `WORM_001_D08_AL_PGM_DR` | `PGM` | 1 | NaN | True | False |
+| `WORM_001_D08_AL_PGM_ADP_1min_DR` | `PGM_ADP_1min` | 2 | 1 | True | True |
+| `WORM_001_D08_AL_PGM_ADP_30min_DR` | `PGM_ADP_30min` | 2 | 30 | True | True |
+
+Waiting times: a whole number glued to `s`, `min` or `h` (`90s`, `30min`, `2h`), stored in minutes. `PGM_5min_ADP_30min` means 5 min after PGM, then 30 min after ADP; a new product starts a new wait.
+
+**Declaring a product** in the notebook, with a short description:
+
+```python
+import anndata
+from mito_marker import annotate_sfc_conditions, ingest_sfc_folder
+
+condition_tokens = {
+    "PGM": "Pyruvate + glutamate + malate (complex I substrates)",
+    "ADP": "Adenosine diphosphate",
+}
+spectral_cytometry_anndata = ingest_sfc_folder(data_folder, output_file, condition_tokens=condition_tokens)
+
+# or, on a .h5ad already ingested:
+spectral_cytometry_anndata = anndata.read_h5ad(output_file)
+annotate_sfc_conditions(spectral_cytometry_anndata, condition_tokens=condition_tokens)
+spectral_cytometry_anndata.write_h5ad(output_file)
+```
+
+A token starts with a letter and holds letters, digits, `+` or `-`. It cannot reuse a word that already has a meaning in filenames (species, diet such as `AL`, marker such as `DR`…). The products are saved in `.uns["sfc_condition_tokens"]` and reused by later calls, so a new call only needs the new products.
+
+A filename word that no rule recognises (a typo such as `PMG`, or a product not declared yet) triggers an `UnrecognisedFilenameTokenWarning` that names the word, gives an example file, suggests a close declared product, and shows the code above. The word is ignored. To silence it, for example for a FlowJo gate name: `warnings.filterwarnings("ignore", category=UnrecognisedFilenameTokenWarning)` (imported from `mito_marker.sfc.conditions`).
+
+Comparing conditions: `group_by="condition"` (categories in protocol order: fewer additions first, then shorter waiting time), or filter on `with_ADP`. The steps of one sample are repeated measures: pair them by `specie` + `subject_ID`.
 
 ---
 
@@ -893,6 +949,7 @@ data/raw/sfc/*.fcs
         ▼ load_fcs_file()         → channel_names, event_matrix
         ▼ build_sfc_anndata()     → single-file AnnData
         ▼ _concatenate_anndata_objects() → combined AnnData
+        ▼ annotate_sfc_conditions() → condition columns (products declared in the notebook)
         ▼ .write_h5ad()           → data/processed/sfc.h5ad
 ```
 
@@ -958,6 +1015,8 @@ anndata_object.obs["insulin_level_uU_per_mL"] = series
 ```
 
 Never hardcode string values (like `"DeepRed"` or `"MNMS"`) outside of `controlled_vocabulary.py`.
+
+**One exception: SFC products** (ADR-019). The products added to SFC tubes are declared in the notebook with `condition_tokens`, not in `controlled_vocabulary.py`, so that a colleague testing a new product needs no package change. The rules that check them (token form, waiting-time pattern, words that already have a meaning) stay in `controlled_vocabulary.py`.
 
 ---
 

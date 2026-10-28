@@ -10,9 +10,14 @@ Public API:
     enrich_with_clinical_data(anndata_object, clinical_csv_path, ...)
         Merge per-subject clinical variables from a CSV into AnnData .obs,
         linked via subject_ID.
+
+    annotate_sfc_conditions(spectral_cytometry_anndata, condition_tokens)
+        Add the products added to each tube and the waiting times (read from
+        the FCS filename) to .obs, with products declared in the notebook.
 """
 
 from mito_marker.sfc.clinical_data import enrich_with_clinical_data
+from mito_marker.sfc.conditions import annotate_sfc_conditions
 from mito_marker.sfc.ingestion import ingest_sfc_folder
 
-__all__ = ["ingest_sfc_folder", "enrich_with_clinical_data"]
+__all__ = ["ingest_sfc_folder", "enrich_with_clinical_data", "annotate_sfc_conditions"]

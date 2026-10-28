@@ -36,8 +36,13 @@ from mito_marker.controlled_vocabulary import (
     MARKER_TOKEN_TO_CANONICAL_SFC,
     NUMERICAL_OBS_BOUNDS,
     PREFERRED_CONDITION_COLORS,
+    SFC_ADDITION_TIME_TOKEN_PATTERN,
+    SFC_ADDITION_TIME_UNIT_TO_MINUTES,
     SFC_CHANNELS_TO_EXCLUDE,
     SFC_CHANNELS_TO_KEEP,
+    SFC_CONDITION_OBS_FIELDS,
+    SFC_FILENAME_TOKENS_WITHOUT_METADATA,
+    SFC_PRODUCT_TOKEN_PATTERN,
     TEM_FEATURE_COLUMNS,
     TEM_IMAGE_REFERENCED_FEATURES,
     TEM_NON_ANALYTICAL_FEATURES,
@@ -213,6 +218,43 @@ class TestFlowAIPassTokens:
 
     def test_contains_events_token(self):
         assert "events" in FLOWAI_PASS_TOKENS
+
+    def test_contains_lowercase_goodevents_token(self):
+        assert "goodevents" in FLOWAI_PASS_TOKENS
+
+
+# ---------------------------------------------------------------------------
+# SFC conditions: products added to the tube (ADR-019)
+# ---------------------------------------------------------------------------
+
+
+class TestSfcConditionVocabulary:
+    """Fixed rules for reading products and waiting times from SFC filenames."""
+
+    def test_tokens_without_metadata_have_descriptions(self):
+        for token, description in SFC_FILENAME_TOKENS_WITHOUT_METADATA.items():
+            assert isinstance(token, str) and token
+            assert isinstance(description, str) and description
+
+    def test_tokens_without_metadata_are_not_product_like_flowai_tokens(self):
+        assert not set(SFC_FILENAME_TOKENS_WITHOUT_METADATA) & FLOWAI_PASS_TOKENS
+
+    def test_every_time_unit_has_a_conversion(self):
+        units = re.search(r"\(([^()]*)\)$", SFC_ADDITION_TIME_TOKEN_PATTERN).group(1).split("|")
+        assert set(units) == set(SFC_ADDITION_TIME_UNIT_TO_MINUTES)
+
+    def test_minute_is_the_reference_unit(self):
+        assert SFC_ADDITION_TIME_UNIT_TO_MINUTES["min"] == 1.0
+        assert SFC_ADDITION_TIME_UNIT_TO_MINUTES["h"] == 60.0
+
+    def test_product_pattern_rejects_underscore(self):
+        assert re.fullmatch(SFC_PRODUCT_TOKEN_PATTERN, "PGM")
+        assert not re.fullmatch(SFC_PRODUCT_TOKEN_PATTERN, "PG_M")
+
+    def test_numerical_condition_fields_have_bounds(self):
+        for field_name in SFC_CONDITION_OBS_FIELDS:
+            if field_name != "condition":
+                assert field_name in NUMERICAL_OBS_BOUNDS
 
 
 # ---------------------------------------------------------------------------

@@ -909,6 +909,71 @@ experiments and were excluded by hand, experiment by experiment:
 
 ---
 
+## ADR-019 — SFC experimental conditions: products declared in the notebook, read from the filename
+
+**Date**: 2026-10-28
+**Status**: accepted
+
+**Context**: Colleagues test incremental conditions on SFC samples: products
+are added to the same sample one after another (the substrates PGM, then ADP),
+with a waiting time before each acquisition (1 min, 30 min). New products come
+with new experiments. Under ADR-002 every allowed value is declared in
+`controlled_vocabulary.py`, so every new product would need a package change
+and a release. The SFC filename parser also ignored unknown words silently:
+`PGM`, `ADP`, `1min` and `30min` disappeared, and the four tubes of one sample
+received identical `.obs` metadata.
+
+**Decision**:
+- Naming: each filename lists every product present in the tube, in order of
+  addition, with the waiting time (whole number + `s`, `min` or `h`) right
+  after the product it refers to: `WORM_001_D08_AL_PGM_ADP_30min_DR`.
+- The products are declared in the notebook,
+  `ingest_sfc_folder(..., condition_tokens={token: description})`, checked
+  (token form, no existing meaning in SFC filenames, non-empty description)
+  and saved in `.uns["sfc_condition_tokens"]`. The fixed rules (time pattern,
+  words without metadata, column names, bounds) stay in
+  `controlled_vocabulary.py`. This amends ADR-002 for SFC product tokens only:
+  the values of `condition` are checked by these rules and the declaration,
+  not by a dict in `controlled_vocabulary.py`.
+- `.obs` receives `condition` (categorical, categories in protocol order:
+  fewer additions first, then shorter waiting time), `number_of_additions`,
+  `minutes_after_last_addition` and one `with_<product>` boolean per product.
+- A word that no rule recognises raises one
+  `UnrecognisedFilenameTokenWarning` listing the words and showing how to
+  declare a product; it is never stored. The words FlowJo adds are listed in
+  `SFC_FILENAME_TOKENS_WITHOUT_METADATA` and skipped silently.
+- Conditions are computed from `.obs["source_filename"]` by
+  `annotate_sfc_conditions()`, once on the combined AnnData, so they can also
+  be recomputed on a `.h5ad` loaded later. In append mode the saved products
+  are read before concatenation, because `anndata.concat()` drops `.uns`.
+
+**Alternatives considered**:
+- Declare every product in `controlled_vocabulary.py` (ADR-002 unchanged): a
+  package change and a release for every new product.
+- Treat every unrecognised word as a product, without declaration: the 889
+  filenames ingested so far contain `export`, `expor`, `DR+`, `P1`, `bis` and
+  `BIS`, which would become products, and a typo would create a new condition
+  without notice.
+- A sample sheet (one row per tube, joined on the filename, as for clinical
+  data in ADR-009): the cytometry standard (e.g. the CATALYST/diffcyt metadata
+  table), and the right tool when doses or other parameters vary, but one more
+  file to keep consistent with the tubes. Kept for when doses vary.
+- Stop the ingestion on an unknown word: rejected by Gaëtan (2026-10-28) in
+  favour of a warning, so that a FlowJo gate name does not block it.
+
+**Consequences**:
+- A new product is one line in the notebook; no release is needed.
+- Two notebooks may describe one token differently; each `.h5ad` records the
+  description it was built with.
+- The SFC `condition` column holds products and times, whereas the TEM one
+  holds groups such as `Young`/`Old`; both are read by `group_by="condition"`.
+- The steps of one sample are repeated measures: comparisons pair them by
+  `specie` + `subject_ID`, and the effective n is the number of samples
+  (ADR-008).
+- Not covered yet: doses and the acquisition start time (`$BTIM`).
+
+---
+
 ## ADR-NNN — Template for future entries
 
 Copy and fill in for each new decision:

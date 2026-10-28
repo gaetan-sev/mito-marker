@@ -3,7 +3,7 @@ title: Glossary
 status: draft
 owner: gaetan
 created: 2026-04-28
-updated: 2026-09-28
+updated: 2026-10-28
 tags: [glossary, terminology, acronyms]
 related: [docs/PROJECT.md, docs/DECISIONS.md]
 priority: P2
@@ -216,6 +216,14 @@ All `.obs` fields must be declared in `controlled_vocabulary.py` before use.
 Categorical fields use string-keyed dicts; numerical fields use bounds dicts
 in `NUMERICAL_OBS_BOUNDS`. Prevents silent label typos and makes the data
 schema explicit. See ADR-002.
+
+### SFC condition tokens
+
+Products added to an SFC tube, declared in the notebook
+(`ingest_sfc_folder(..., condition_tokens={"PGM": "..."})`) instead of in
+`controlled_vocabulary.py`. Filenames list every product in order of addition,
+with the waiting time after its product (`PGM_ADP_30min`); `.obs["condition"]`
+holds that chain, `No_addition` when there is none. See ADR-019.
 
 ### Layer naming convention
 
