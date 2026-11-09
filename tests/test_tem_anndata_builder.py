@@ -19,6 +19,7 @@ from mito_marker.controlled_vocabulary import (
     ALLOWED_SPECIES_TEM,
     TEM_FEATURE_COLUMNS,
     TEM_NON_ANALYTICAL_FEATURES,
+    TEM_UNVALIDATED_FEATURES,
 )
 from mito_marker.tem.tem_anndata_builder import (
     build_tem_anndata,
@@ -288,12 +289,23 @@ class TestVarIndex:
 # The four features flagged by package versions before ADR-018.
 _PRE_ADR_018_FLAGS = ["Mito_CentroidX", "Mito_CentroidY", "Mito_FeretX", "Mito_FeretY"]
 
+# The 15 features flagged by package versions 0.3.0 and 0.4.0 (ADR-018): the
+# image-referenced features plus the 10 grey-level columns.
+_ADR_018_FLAGS = _PRE_ADR_018_FLAGS + [
+    "CristaeOrientation_Angle",
+    "Mito_MeanInt", "Mito_MeanInt_CORR",
+    "Mito_MedianInt", "Mito_MedianInt_CORR",
+    "Mito_TotalInt", "Mito_TotalInt_CORR",
+    "Intensity_SD", "Intensity_SD_CORR",
+    "Intensity_SD_percent", "Intensity_SD_percent_CORR",
+]
 
-def _build_with_old_flags() -> anndata.AnnData:
-    """A TEM AnnData as saved by a package version before ADR-018."""
+
+def _build_with_old_flags(old_flags: list[str] = _PRE_ADR_018_FLAGS) -> anndata.AnnData:
+    """A TEM AnnData as saved by an older package version, flagging old_flags."""
     tem_morphology_anndata = _build()
     tem_morphology_anndata.var["is_non_analytical"] = [
-        name in _PRE_ADR_018_FLAGS for name in TEM_FEATURE_COLUMNS
+        name in old_flags for name in TEM_FEATURE_COLUMNS
     ]
     return tem_morphology_anndata
 
@@ -304,13 +316,32 @@ class TestRefreshNonAnalyticalFlags:
         flagged = set(result.var_names[result.var["is_non_analytical"]])
         assert flagged == set(TEM_NON_ANALYTICAL_FEATURES)
 
-    def test_new_exclusions_are_flagged(self):
+    def test_cristae_angle_is_newly_flagged_on_a_pre_adr_018_file(self):
         result = refresh_tem_non_analytical_flags(_build_with_old_flags())
-        for feature_name in [
-            "CristaeOrientation_Angle", "Mito_MeanInt", "Mito_MedianInt",
-            "Intensity_SD", "Intensity_SD_percent", "Intensity_SD_percent_CORR",
-        ]:
-            assert result.var.loc[feature_name, "is_non_analytical"], feature_name
+        assert result.var.loc["CristaeOrientation_Angle", "is_non_analytical"]
+
+    def test_grey_levels_stay_analysed_on_a_pre_adr_018_file(self):
+        result = refresh_tem_non_analytical_flags(_build_with_old_flags())
+        for feature_name in TEM_UNVALIDATED_FEATURES:
+            assert not result.var.loc[feature_name, "is_non_analytical"], feature_name
+
+    def test_adr_018_grey_level_flags_are_lifted(self):
+        # A .h5ad saved by 0.3.0 or 0.4.0 flags 15 features; ADR-020 keeps 5.
+        result = refresh_tem_non_analytical_flags(_build_with_old_flags(_ADR_018_FLAGS))
+        flagged = set(result.var_names[result.var["is_non_analytical"]])
+        assert flagged == set(TEM_NON_ANALYTICAL_FEATURES)
+        assert len(flagged) == 5
+
+    def test_unvalidated_analysed_features_are_named_in_the_console(self, capsys):
+        refresh_tem_non_analytical_flags(_build_with_old_flags(_ADR_018_FLAGS))
+        console_output = capsys.readouterr().out
+        assert "Newly included by this call (10)" in console_output
+        assert "Caution: 10 analysed feature(s) are not validated" in console_output
+
+    def test_no_caution_when_the_grey_levels_are_absent(self, capsys):
+        tem_morphology_anndata = _build()[:, ["Mito_Area", "Skewness"]].copy()
+        refresh_tem_non_analytical_flags(tem_morphology_anndata)
+        assert "Caution" not in capsys.readouterr().out
 
     def test_modifies_in_place_and_returns_the_same_object(self):
         tem_morphology_anndata = _build_with_old_flags()
@@ -337,7 +368,7 @@ class TestRefreshNonAnalyticalFlags:
         subset_names = ["Mito_Area", "Mito_MeanInt", "CristaeOrientation_Angle", "Skewness"]
         tem_morphology_anndata = _build()[:, subset_names].copy()
         result = refresh_tem_non_analytical_flags(tem_morphology_anndata)
-        assert result.var["is_non_analytical"].tolist() == [False, True, True, False]
+        assert result.var["is_non_analytical"].tolist() == [False, False, True, False]
 
     def test_manual_opt_in_after_the_call_is_kept(self):
         result = refresh_tem_non_analytical_flags(_build_with_old_flags())
@@ -356,9 +387,10 @@ class TestRefreshNonAnalyticalFlags:
     def test_console_reports_what_changed(self, capsys):
         refresh_tem_non_analytical_flags(_build_with_old_flags())
         console_output = capsys.readouterr().out
-        assert "Newly excluded by this call (11)" in console_output
+        # From the 4 pre-ADR-018 flags, ADR-020 adds the cristae angle only.
+        assert "Newly excluded by this call (1)" in console_output
         assert "Newly included by this call (0)" in console_output
-        assert "Analytical features left: 13" in console_output
+        assert "Analytical features left: 23" in console_output
 
 
 # ---------------------------------------------------------------------------

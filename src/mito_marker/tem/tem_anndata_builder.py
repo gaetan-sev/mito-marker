@@ -42,6 +42,7 @@ from mito_marker.controlled_vocabulary import (
     ALLOWED_SPECIES_TEM,
     TEM_FEATURE_COLUMNS,
     TEM_NON_ANALYTICAL_FEATURES,
+    TEM_UNVALIDATED_FEATURES,
 )
 
 
@@ -126,13 +127,16 @@ def refresh_tem_non_analytical_flags(
 
     The flag is written once, at ingestion. An AnnData saved to .h5ad by an
     older package version keeps the exclusion list of that version, so a
-    change of the default (ADR-018) would not reach it. Call this right after
-    anndata.read_h5ad() to apply the current default.
+    change of the default (ADR-018, ADR-020) would not reach it. Call this
+    right after anndata.read_h5ad() to apply the current default.
 
-    Every feature of .var is re-stamped, so a feature opted in by hand before
-    the call is excluded again. To analyse a non-analytical feature (e.g. a
-    spatial study), opt it in after the call:
+    Every feature of .var is re-stamped, so a feature opted in or out by hand
+    before the call returns to the default. To analyse a non-analytical
+    feature (e.g. a spatial study), opt it in after the call:
         tem_morphology_anndata.var.loc["CristaeOrientation_Angle", "is_non_analytical"] = False
+    To leave out the grey levels, analysed by default but not validated
+    (ADR-020), opt them out after the call:
+        tem_morphology_anndata.var.loc[list(TEM_UNVALIDATED_FEATURES), "is_non_analytical"] = True
 
     Parameters
     ----------
@@ -175,12 +179,28 @@ def refresh_tem_non_analytical_flags(
     newly_excluded = [name for name in feature_names if new_flags[name] and not previous_flags[name]]
     newly_included = [name for name in feature_names if previous_flags[name] and not new_flags[name]]
     excluded_names = [name for name in feature_names if new_flags[name]]
-    print("[TEM flags] Re-stamped .var['is_non_analytical'] from TEM_NON_ANALYTICAL_FEATURES (ADR-018)")
+    # The grey levels are analysed by default without being validated
+    # (ADR-020): name them, so a grey-level-driven result is never a surprise.
+    unvalidated_analysed = [
+        name for name in feature_names
+        if name in TEM_UNVALIDATED_FEATURES and not new_flags[name]
+    ]
+    print("[TEM flags] Re-stamped .var['is_non_analytical'] from TEM_NON_ANALYTICAL_FEATURES (ADR-018, ADR-020)")
     print(f"  Observations: {tem_morphology_anndata.n_obs}, Variables: {tem_morphology_anndata.n_vars}")
     print(f"  Excluded by default ({len(excluded_names)}): {excluded_names}")
     print(f"  Newly excluded by this call ({len(newly_excluded)}): {newly_excluded}")
     print(f"  Newly included by this call ({len(newly_included)}): {newly_included}")
     print(f"  Analytical features left: {tem_morphology_anndata.n_vars - len(excluded_names)}")
+    if unvalidated_analysed:
+        print(
+            f"  Caution: {len(unvalidated_analysed)} analysed feature(s) are not validated "
+            f"(TEM_UNVALIDATED_FEATURES): {unvalidated_analysed}"
+        )
+        print(
+            "  Grey levels are comparable within one image only and can separate imaging "
+            "batches. To leave them out: "
+            ".var.loc[list(TEM_UNVALIDATED_FEATURES), 'is_non_analytical'] = True"
+        )
 
     return tem_morphology_anndata
 

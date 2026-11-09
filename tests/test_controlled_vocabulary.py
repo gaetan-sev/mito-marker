@@ -403,7 +403,7 @@ class TestSfcChannelLists:
 
 
 class TestTemDefaultExclusions:
-    """ADR-018: features excluded from TEM analysis by default, one list per reason."""
+    """ADR-018, ADR-020: two lists of TEM features that need care; only the first is excluded."""
 
     def test_image_referenced_features_are_the_coordinates_and_the_cristae_angle(self):
         assert TEM_IMAGE_REFERENCED_FEATURES == [
@@ -439,18 +439,23 @@ class TestTemDefaultExclusions:
     def test_the_two_lists_are_disjoint(self):
         assert set(TEM_IMAGE_REFERENCED_FEATURES).isdisjoint(TEM_UNVALIDATED_FEATURES)
 
-    def test_non_analytical_features_are_the_union_of_the_two_lists(self):
-        assert TEM_NON_ANALYTICAL_FEATURES == (
-            TEM_IMAGE_REFERENCED_FEATURES + list(TEM_UNVALIDATED_FEATURES)
-        )
+    def test_non_analytical_features_are_the_image_referenced_features(self):
+        assert TEM_NON_ANALYTICAL_FEATURES == TEM_IMAGE_REFERENCED_FEATURES
         assert len(TEM_NON_ANALYTICAL_FEATURES) == len(set(TEM_NON_ANALYTICAL_FEATURES))
+
+    def test_non_analytical_list_is_a_copy_of_the_image_referenced_list(self):
+        # Opting a feature in by mutating one list must not change the other.
+        assert TEM_NON_ANALYTICAL_FEATURES is not TEM_IMAGE_REFERENCED_FEATURES
+
+    def test_unvalidated_grey_levels_are_analysed_by_default(self):
+        assert set(TEM_UNVALIDATED_FEATURES).isdisjoint(TEM_NON_ANALYTICAL_FEATURES)
 
     def test_every_excluded_feature_is_a_tem_feature_column(self):
         unknown = [name for name in TEM_NON_ANALYTICAL_FEATURES if name not in TEM_FEATURE_COLUMNS]
         assert unknown == []
 
-    def test_thirteen_features_are_analysed_by_default(self):
-        assert len(TEM_FEATURE_COLUMNS) - len(TEM_NON_ANALYTICAL_FEATURES) == 13
+    def test_twenty_three_features_are_analysed_by_default(self):
+        assert len(TEM_FEATURE_COLUMNS) - len(TEM_NON_ANALYTICAL_FEATURES) == 23
 
 
 # ---------------------------------------------------------------------------

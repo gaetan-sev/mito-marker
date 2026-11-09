@@ -808,7 +808,7 @@ are not. The new loadings panel on every PCA plot needed one formula.
 ## ADR-018 — Default TEM feature exclusions: image-referenced and unvalidated features
 
 **Date**: 2026-10-12
-**Status**: accepted
+**Status**: superseded in part by ADR-020 (grey-level columns analysed by default)
 
 (ADR-017, TEM pixel scale, is on the unmerged branch `feat/tem-pixel-scale`.)
 
@@ -971,6 +971,75 @@ received identical `.obs` metadata.
   `specie` + `subject_ID`, and the effective n is the number of samples
   (ADR-008).
 - Not covered yet: doses and the acquisition start time (`$BTIM`).
+
+---
+
+## ADR-020 — TEM grey-level columns analysed by default again; only the image-referenced features are excluded
+
+**Date**: 2026-11-09
+**Status**: accepted
+
+(Supersedes the grey-level part of ADR-018. The image-referenced part of
+ADR-018 stands.)
+
+**Context**:
+
+- ADR-018 excluded 15 TEM features by default: the 5 image-referenced
+  features and the 10 grey-level columns (`TEM_UNVALIDATED_FEATURES`), so 13
+  features were analysed.
+- Gaëtan decided on 2026-11-09 that, for now, every TEM measurement except
+  the 5 image-referenced ones is analysed by default (23 features). Analyses
+  were already opting the grey levels back in by hand (mito-marker-lab,
+  EXP-052).
+- No intensity normalization has been validated since ADR-018. The evidence
+  of ADR-018 stands, and a new observation adds to it: on the mouse Take2
+  data, PC2 is made of grey-level features and separates the 8 samples first
+  acquired in 16-bit from the 13 others, with no overlap (mito-marker-lab,
+  EXP-052, reference run).
+
+**Decision**:
+
+- `TEM_NON_ANALYTICAL_FEATURES` is `TEM_IMAGE_REFERENCED_FEATURES` only:
+  `Mito_CentroidX/Y`, `Mito_FeretX/Y`, `CristaeOrientation_Angle` (5
+  features). Every other TEM feature is analysed by default (23 features).
+- `TEM_UNVALIDATED_FEATURES` keeps the 10 grey-level columns and the known
+  limit of each. It no longer excludes them: it records that they are not
+  validated, and gives the list for leaving them out in one line:
+  `.var.loc[list(TEM_UNVALIDATED_FEATURES), "is_non_analytical"] = True`.
+- `TEM_FEATURE_SUBSETS["Intensity"]` lists the 12 features it held before
+  ADR-018: the 10 grey-level columns, `Skewness` and `Kurtosis`.
+- `refresh_tem_non_analytical_flags()` applies the new default to `.h5ad`
+  files saved by 0.3.0 or 0.4.0 (which flag 15 features), and names in the
+  console the analysed features that are not validated.
+
+**Alternatives considered**:
+
+- Keep the ADR-018 default and opt the grey levels in per analysis: rejected
+  by Gaëtan (2026-11-09) for now. This is what EXP-052 did.
+- Empty `TEM_UNVALIDATED_FEATURES`: rejected. The features are still not
+  validated, the reasons would be lost from the code, and analyses that read
+  the dict to build a control without grey levels (EXP-052) would get an
+  empty list.
+- A warning in every analysis function when grey levels are analysed:
+  rejected for now. About ten modules carry their own copy of the mask helper
+  (ADR-018); the console note of the refresh function is the one place every
+  `.h5ad` goes through.
+
+**Consequences**:
+
+- PCA, UMAP, radar, clustermap, feature selection and group comparison
+  analyse 23 TEM features by default instead of 13. Results produced with
+  0.3.0 or 0.4.0 defaults are not comparable feature-for-feature.
+- Imaging and staining batch effects carried by the grey levels can enter
+  default PCA, clustering and ML results. A grey-level-driven result must be
+  checked against a run without them.
+- `run_feature_subset_challenge(tem_anndata, TEM_FEATURE_SUBSETS)` compares a
+  12-feature Intensity subset again.
+- Code that computes "the default features without grey levels" from
+  `.var['is_non_analytical']` (e.g. the EXP-052 control run) must remove
+  `TEM_UNVALIDATED_FEATURES` itself.
+- Validating an intensity normalization (EXP-034) remains the condition for
+  removing a feature from `TEM_UNVALIDATED_FEATURES`.
 
 ---
 
