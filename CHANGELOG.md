@@ -6,6 +6,25 @@ Install a release with `pip install git+https://github.com/gaetan-sev/mito-marke
 
 ## [Unreleased]
 
+### Changed
+- **Breaking** (changed default): the 10 TEM grey-level columns are analysed
+  by default again (ADR-020, superseding the grey-level part of ADR-018).
+  Only the 5 image-referenced features stay excluded: `Mito_CentroidX/Y`,
+  `Mito_FeretX/Y` and `CristaeOrientation_Angle`.
+  - `TEM_NON_ANALYTICAL_FEATURES` lists 5 features instead of 15, so 23 TEM
+    features are analysed by default instead of 13.
+  - `TEM_UNVALIDATED_FEATURES` still lists the 10 grey-level columns with
+    their known limits, but no longer excludes them.
+  - `TEM_FEATURE_SUBSETS["Intensity"]` lists 12 features again (the 10
+    grey-level columns, `Skewness`, `Kurtosis`).
+  - `refresh_tem_non_analytical_flags()` names in the console the analysed
+    features that are not validated.
+  - Migration: after `anndata.read_h5ad()`, call
+    `refresh_tem_non_analytical_flags()` so a `.h5ad` saved by 0.3.0 or 0.4.0
+    gets the new default. To keep the 0.4.0 behaviour (no grey levels), add
+    `tem_morphology_anndata.var.loc[list(TEM_UNVALIDATED_FEATURES), "is_non_analytical"] = True`
+    after that call.
+
 ## [0.4.0] — 2026-10-28
 
 SFC experimental conditions (products added to the tube, waiting times) read

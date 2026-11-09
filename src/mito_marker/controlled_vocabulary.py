@@ -267,12 +267,13 @@ TEM_FEATURE_COLUMNS: list[str] = [
     col for col in TEM_EXPECTED_FILE_COLUMNS if col not in _TEM_METADATA_COLUMNS
 ]
 
-# Features present in the raw TEM file that are stored in .X but are excluded
-# from analysis by default (ADR-018). Two reasons, two lists:
+# Two lists of TEM features that need care (ADR-018). Only the first one is
+# excluded from analysis by default (ADR-020):
 #
-# 1. Image-referenced features — they describe where the mitochondrion sits in
-#    the TEM field of view, or measure an angle against the image frame, not
-#    the mitochondrion itself. Used only in spatial studies.
+# 1. Image-referenced features — EXCLUDED by default. They describe where the
+#    mitochondrion sits in the TEM field of view, or measure an angle against
+#    the image frame, not the mitochondrion itself. Used only in spatial
+#    studies.
 #   - Mito_CentroidX/Y: spatial coordinates inside the image.
 #   - Mito_FeretX/Y: anchor coordinates of the Feret diameter measurement —
 #     redundant with Mito_Feret_Diameter and equally location-dependent.
@@ -287,15 +288,19 @@ TEM_IMAGE_REFERENCED_FEATURES: list[str] = [
     "CristaeOrientation_Angle",
 ]
 
-# 2. Unvalidated features — excluded until their computation or normalization
-#    is validated. Key = feature, value = why it is excluded. Remove a feature
-#    from this dict (with a new ADR) once it is validated.
+# 2. Unvalidated features — ANALYSED by default since ADR-020 (ADR-018
+#    excluded them), although their computation or normalization is still not
+#    validated. Key = feature, value = its known limit. Remove a feature from
+#    this dict (with a new ADR) once it is validated.
 #    These are the 10 grey-level columns. Raw grey levels are comparable within
 #    one image only: image means range 73–201 grey levels, and differ between
 #    animals of the same batch (mito-marker-lab, EXP-032 step 5f, EXP-034).
-#    Opt them in for within-image analyses, or for within-batch analyses once
-#    a normalization is validated. Skewness and Kurtosis stay analysed: a
-#    per-image linear rescaling leaves them unchanged.
+#    On the mouse Take2 data they separate the acquisition batch
+#    (mito-marker-lab, EXP-052). To leave them out (e.g. a control run
+#    without grey levels):
+#        tem_morphology_anndata.var.loc[list(TEM_UNVALIDATED_FEATURES), "is_non_analytical"] = True
+#    Skewness and Kurtosis are not in this dict: a per-image linear rescaling
+#    leaves them unchanged.
 _TEM_GREY_LEVEL_BATCH_REASON: str = (
     "Grey level: comparable within one image only. Strong imaging/staining "
     "batch effect between images and animals, even within one batch; no "
@@ -332,15 +337,14 @@ TEM_UNVALIDATED_FEATURES: dict[str, str] = {
     ),
 }
 
-# Union of the two lists. Stamped as is_non_analytical=True in .var at
-# ingestion time (or by refresh_tem_non_analytical_flags() on an AnnData
-# saved by an older package version), so that all downstream analysis
-# functions (PCA, UMAP, feature selection, radar) automatically exclude them
-# without requiring per-function drop_cols logic. To use one of them (e.g. a
-# spatial study), set .var.loc[feature_name, "is_non_analytical"] = False.
-TEM_NON_ANALYTICAL_FEATURES: list[str] = (
-    TEM_IMAGE_REFERENCED_FEATURES + list(TEM_UNVALIDATED_FEATURES)
-)
+# The features excluded by default: the 5 image-referenced features only
+# (ADR-020). Stamped as is_non_analytical=True in .var at ingestion time (or
+# by refresh_tem_non_analytical_flags() on an AnnData saved by an older
+# package version), so that all downstream analysis functions (PCA, UMAP,
+# feature selection, radar) automatically exclude them without requiring
+# per-function drop_cols logic. To use one of them (e.g. a spatial study),
+# set .var.loc[feature_name, "is_non_analytical"] = False.
+TEM_NON_ANALYTICAL_FEATURES: list[str] = list(TEM_IMAGE_REFERENCED_FEATURES)
 
 # ---------------------------------------------------------------------------
 # TEM PIPELINE — biological feature categories (single source of truth)
@@ -373,9 +377,9 @@ TEM_NON_ANALYTICAL_FEATURES: list[str] = (
 # outline shape are expected to behave very differently.
 #
 # Non-analytical features (TEM_NON_ANALYTICAL_FEATURES: the image-referenced
-# coordinates and cristae angle, and the 10 grey-level columns) are
-# deliberately ABSENT — every feature listed here is analysed by default
-# (ADR-018). An opted-in non-analytical feature falls back to "Other".
+# coordinates and cristae angle) are deliberately ABSENT — every feature
+# listed here is analysed by default (ADR-018, ADR-020). An opted-in
+# non-analytical feature falls back to "Other".
 #
 # Typical usage:
 #   from mito_marker.controlled_vocabulary import TEM_FEATURE_SUBSETS
@@ -396,11 +400,22 @@ TEM_FEATURE_SUBSETS: dict[str, list[str]] = {
         "Mito_Solidity",
         "Mito_AR",
     ],
-    # Shape of the grey-level distribution within the mitochondrion. The 10
-    # grey-level columns (mean, median, total, SD, their _CORR variants and
-    # both Intensity_SD_percent) are excluded until a normalization is
-    # validated (TEM_UNVALIDATED_FEATURES).
+    # Grey levels of the mitochondrion and the shape of their distribution.
+    # The 10 grey-level columns (mean, median, total, SD, their _CORR variants
+    # and both Intensity_SD_percent) are analysed by default but not validated
+    # (TEM_UNVALIDATED_FEATURES, ADR-020); Skewness and Kurtosis are
+    # comparable across files.
     "Intensity": [
+        "Mito_MeanInt",
+        "Mito_MeanInt_CORR",
+        "Mito_MedianInt",
+        "Mito_MedianInt_CORR",
+        "Mito_TotalInt",
+        "Mito_TotalInt_CORR",
+        "Intensity_SD",
+        "Intensity_SD_CORR",
+        "Intensity_SD_percent",
+        "Intensity_SD_percent_CORR",
         "Skewness",
         "Kurtosis",
     ],
@@ -457,7 +472,7 @@ TEM_FEATURE_CATEGORY_COLORS: dict[str, str] = {
 # radar figure. Spokes are grouped into contiguous TEM_FEATURE_CATEGORY_ORDER
 # blocks and colored by TEM_FEATURE_CATEGORY_COLORS (both above). This dict
 # only shortens the long raw feature names so the horizontal spoke labels
-# (read left-to-right, not rotated along the spoke) stay readable at the ~13
+# (read left-to-right, not rotated along the spoke) stay readable at the ~23
 # TEM feature count.
 #
 # The "Mito_" prefix is dropped everywhere (every TEM feature describes a

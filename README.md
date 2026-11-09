@@ -456,12 +456,10 @@ Scans a folder for `*_MITO_measurements.txt` files, parses each filename for spe
 
 Missing tokens produce a `warnings.warn()` and the field is set to `None` — no hard failure.
 
-**Features excluded from analysis by default** (`TEM_NON_ANALYTICAL_FEATURES`, ADR-018): every analysis function skips the features flagged in `.var['is_non_analytical']`, and `TEM_FEATURE_SUBSETS` does not list them.
+**Features excluded from analysis by default** (`TEM_NON_ANALYTICAL_FEATURES`, ADR-018, ADR-020): every analysis function skips the features flagged in `.var['is_non_analytical']`, and `TEM_FEATURE_SUBSETS` does not list them. 23 of the 28 TEM features are analysed by default.
 
-- Image-referenced (`TEM_IMAGE_REFERENCED_FEATURES`): `Mito_CentroidX/Y`, `Mito_FeretX/Y`, `CristaeOrientation_Angle`. For spatial studies only.
-- Unvalidated (`TEM_UNVALIDATED_FEATURES`, with the reason for each): the 10 grey-level columns, i.e. `Mito_MeanInt`, `Mito_MedianInt`, `Mito_TotalInt`, `Intensity_SD`, their `_CORR` variants and both `Intensity_SD_percent` columns. Raw grey levels are comparable within one image only, until a normalization is validated. `Skewness` and `Kurtosis` stay analysed.
-
-To analyse one of them, opt it in: `tem_morphology_anndata.var.loc["CristaeOrientation_Angle", "is_non_analytical"] = False`.
+- Excluded — image-referenced (`TEM_IMAGE_REFERENCED_FEATURES`): `Mito_CentroidX/Y`, `Mito_FeretX/Y`, `CristaeOrientation_Angle`. For spatial studies only. To analyse one of them, opt it in: `tem_morphology_anndata.var.loc["CristaeOrientation_Angle", "is_non_analytical"] = False`.
+- Analysed but not validated (`TEM_UNVALIDATED_FEATURES`, with the known limit of each): the 10 grey-level columns, i.e. `Mito_MeanInt`, `Mito_MedianInt`, `Mito_TotalInt`, `Intensity_SD`, their `_CORR` variants and both `Intensity_SD_percent` columns. Raw grey levels are comparable within one image only, and they can separate imaging batches. Check any grey-level-driven result against a run without them: `tem_morphology_anndata.var.loc[list(TEM_UNVALIDATED_FEATURES), "is_non_analytical"] = True`. `Skewness` and `Kurtosis` are comparable across files.
 
 #### `tem_anndata_builder.py` — `refresh_tem_non_analytical_flags`
 
