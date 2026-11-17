@@ -226,6 +226,10 @@ def get_default_ml_config() -> dict:
         #        cluster. Captures multi-modal sub-population structure that mean/
         #        std/median/skew alone collapse away — see
         #        mito-marker-lab, EXP-005 (controlled cluster grid).
+        #        WARNING: this KMeans also sees the subjects held out for testing
+        #        (fit before the LOGO split), so a held-out score on these columns
+        #        is not a clean out-of-sample estimate. A UserWarning is emitted;
+        #        see create_bags() in ml_bagging.py. A fix is planned.
         "bag_n_clusters":             None,
         # How each subject's mitos are drawn into a bag. See ALLOWED_BAG_SAMPLING_MODES.
         # "auto" keeps the historical behaviour: distinct rows when the subject has
@@ -396,6 +400,9 @@ def configure_ml(anndata_object: anndata.AnnData) -> dict:
         print("  fraction of its mitos falling into each of k unsupervised morphology")
         print("  clusters (fit once via KMeans on all subjects pooled, no label used).")
         print("  Captures sub-population structure that mean/std/median/skew alone miss.")
+        print("  WARNING: the KMeans also sees the subjects held out for testing, so a")
+        print("  held-out score on these columns is not a clean out-of-sample estimate")
+        print("  (fix planned). Use them for description, not for a performance claim.")
         cluster_input = input(
             "  Number of clusters k (e.g. 6, or blank to disable): "
         ).strip()

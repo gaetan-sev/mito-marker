@@ -29,6 +29,8 @@ Covers:
     - bag_statistics=[] + n_clusters set → cluster-fraction-only bags.
     - bag_statistics=[] + n_clusters=None → raises ValueError.
     - Same random_state → deterministic (KMeans fit + sampling both seeded).
+    - n_clusters set → UserWarning that the KMeans also sees held-out subjects;
+      n_clusters=None → no such warning.
 
   _build_sampling_plan() (sampling mode + overlap diagnostics):
     - "auto" falls back to replacement only for undersized subjects.
@@ -559,6 +561,48 @@ class TestCreateBagsClusterFractions:
 
         assert bag_matrix.shape[1] == 4 * 2
         assert not any(name.endswith("__fraction") for name in bag_feature_names)
+
+    def test_n_clusters_warns_that_kmeans_sees_held_out_subjects(self):
+        """The global KMeans fit (known limitation) must be announced to the user."""
+        test_anndata = _make_bag_anndata(n_subjects=3, mitos_per_subject=50, n_features=4)
+
+        with pytest.warns(UserWarning, match="holds out for testing"):
+            create_bags(
+                data_matrix=test_anndata.X,
+                obs_dataframe=test_anndata.obs,
+                subject_id_column="subject_ID",
+                bags_per_subject=4,
+                mitos_per_bag=10,
+                bag_statistics=["mean"],
+                target_obs_column="age_group",
+                task_type="classification",
+                random_state=42,
+                n_jobs=1,
+                n_clusters=3,
+            )
+
+    def test_no_cluster_warning_when_n_clusters_is_none(self):
+        test_anndata = _make_bag_anndata(n_subjects=3, mitos_per_subject=50, n_features=4)
+
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            create_bags(
+                data_matrix=test_anndata.X,
+                obs_dataframe=test_anndata.obs,
+                subject_id_column="subject_ID",
+                bags_per_subject=4,
+                mitos_per_bag=10,
+                bag_statistics=["mean"],
+                target_obs_column="age_group",
+                task_type="classification",
+                random_state=42,
+                n_jobs=1,
+            )
+
+        cluster_warnings = [
+            w for w in caught_warnings if "holds out for testing" in str(w.message)
+        ]
+        assert cluster_warnings == []
 
 
 # ---------------------------------------------------------------------------

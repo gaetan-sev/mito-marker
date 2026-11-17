@@ -816,6 +816,8 @@ def create_bags(
 
 Aggregates per-mito measurements into per-subject statistical feature bags (mean, std, percentiles, skewness, kurtosis). Used as input for classical ML models.
 
+> **Warning: cluster fractions (`n_clusters`, or `ml_config["bag_n_clusters"]`).** The KMeans behind the `cluster_k__fraction` columns is fitted once, on every subject, **including the subjects the cross-validation later holds out for testing**. No label is used, but the test subjects shape the clusters that then describe them. A held-out score computed with these columns is therefore not a clean out-of-sample estimate, especially in small cohorts. A `UserWarning` is emitted each time. Use these columns for description until the planned fix (KMeans fitted on the training subjects of each fold).
+
 ##### `configure_ml` / `get_default_ml_config` — `ml_config.py`
 
 Interactive wizard or default dict for ML configuration: model type, task type, cross-validation strategy, SHAP settings, target column. `DEFAULT_MODEL_PARAMS` (dict, keyed by model name) holds the expert-tuned hyperparameter presets used when a config doesn't override them.

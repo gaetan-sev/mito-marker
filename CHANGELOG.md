@@ -24,6 +24,14 @@ Install a release with `pip install git+https://github.com/gaetan-sev/mito-marke
     gets the new default. To keep the 0.4.0 behaviour (no grey levels), add
     `tem_morphology_anndata.var.loc[list(TEM_UNVALIDATED_FEATURES), "is_non_analytical"] = True`
     after that call.
+- `create_bags(n_clusters=…)`, and therefore `ml_config["bag_n_clusters"]` in
+  `run_ml_analysis()`, now emits a `UserWarning`. Its KMeans is fitted
+  once on every subject, including the subjects the cross-validation later
+  holds out. No label is used, but the test subjects shape the clusters that
+  describe them, so a held-out score computed with the `cluster_k__fraction`
+  columns is not a clean out-of-sample estimate. Results are unchanged: this
+  only documents a known limitation (docstrings, configuration wizard, README).
+  A fix (KMeans fitted on the training subjects of each fold) is planned.
 
 ## [0.4.0] — 2026-10-28
 
