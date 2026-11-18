@@ -24,8 +24,26 @@ Optional cluster-fraction features (n_clusters argument):
     every subject's mitochondria pooled together (unsupervised — no target label
     involved), and each bag gets one extra column per cluster: the fraction of
     that bag's sampled mitochondria falling in that cluster (n_clusters numbers
-    per bag, summing to 1). Validated across all 6 TEM species in
-    mito-marker-lab, EXP-005 (controlled cluster grid) and EXP-006 (n_clusters sweep).
+    per bag, summing to 1). Tested across all 6 TEM species in
+    mito-marker-lab, EXP-005 (controlled cluster grid) and EXP-006 (n_clusters
+    sweep), with the global fit described in the warning below.
+
+    WARNING — known limitation, not fixed yet: the KMeans also sees the
+    subjects held out for testing.
+    The KMeans is fit before any train/test split, on every subject, including
+    the subjects that a later cross-validation (e.g. the LOGO loop of
+    run_ml_analysis() with ml_config["bag_n_clusters"]) holds out for testing.
+    No label enters the fit, so this is not a label leak.  But the held-out
+    subjects shape the clusters that are then used to describe them, so a
+    held-out score computed with the cluster-fraction columns is not a clean
+    out-of-sample estimate.  The smaller the cohort, the larger the effect: with
+    6 subjects and a held-out pair, the test pair is about a third of the KMeans
+    input.  mito-marker-lab EXP-005 to EXP-007 used this global fit.
+    create_bags() emits a UserWarning every time n_clusters is set.
+    Planned fix: fit the KMeans on each fold's training subjects only, then
+    assign the test subjects with predict().  Until then, use the cluster
+    fractions for description, or fit the clusters inside each fold yourself
+    (as mito-marker-lab, EXP-062 does) before quoting a held-out score.
 
 Sampling mode and bag overlap (sampling_mode / max_overlap_fraction arguments):
     Two bags drawn from the same subject share a predictable fraction of that
@@ -87,6 +105,21 @@ ALLOWED_BAG_SAMPLING_MODES: Dict[str, str] = {
     ),
 }
 
+# Message of the UserWarning emitted every time create_bags() is called with
+# n_clusters set.  Kept in one constant so tests (and users who want to filter
+# it with warnings.filterwarnings) match the same text.
+_CLUSTER_FIT_ON_ALL_SUBJECTS_WARNING: str = (
+    "create_bags(n_clusters=...) / ml_config['bag_n_clusters']: the KMeans is fit "
+    "once, on every subject pooled, including the subjects that a later "
+    "cross-validation holds out for testing. No label is used, but the test "
+    "subjects shape the clusters that then describe them, so a held-out score "
+    "computed with the cluster_k__fraction columns is not a clean out-of-sample "
+    "estimate (with 6 subjects and a held-out pair, the test pair is about a "
+    "third of the KMeans input). Use these columns for description, or fit the "
+    "clusters on each fold's training subjects (as mito-marker-lab, EXP-062 "
+    "does). A fix is planned."
+)
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -139,6 +172,16 @@ def create_bags(
       simplification the rest of this pipeline already makes for feature
       selection — it is not refit per subject or per bag.
 
+      WARNING — the KMeans also sees the subjects held out for testing.
+      Because it is fit on every subject, before any cross-validation split,
+      the held-out subjects shape the clusters that then describe them (no label
+      is used, so this is not a label leak).  A held-out score computed with the
+      cluster-fraction columns is therefore not a clean out-of-sample estimate,
+      and the effect grows as the cohort shrinks (6 subjects, held-out pair →
+      about a third of the KMeans input).  A UserWarning is emitted every time
+      n_clusters is set.  A fix (KMeans fit on each fold's training subjects
+      only) is planned; see the module docstring.
+
     Sampling mode:
       The draw is resolved once per subject, in this function (not inside the
       joblib workers), so the QC block below is printed from the parent process
@@ -167,6 +210,8 @@ def create_bags(
         n_clusters:         None (default) disables cluster-fraction features. An int >= 2
                             fits one global KMeans and appends that many fraction columns
                             per bag, named "cluster_0__fraction" ... "cluster_{k-1}__fraction".
+                            The KMeans sees every subject, held-out ones included: see the
+                            warning above before quoting a held-out score on these columns.
         sampling_mode:      One of ALLOWED_BAG_SAMPLING_MODES:
                               "auto" (default)      — without replacement where possible,
                                                       with replacement for subjects too small.
@@ -185,6 +230,11 @@ def create_bags(
         verbose:            True (default) prints the per-subject sampling QC block. Set False
                             for loops that call create_bags() many times (e.g. the permutation
                             test). The UserWarning is emitted either way.
+
+    Warns:
+        UserWarning: n_clusters is set (the KMeans is fit on every subject, including those a
+                     later cross-validation holds out), or a subject's expected bag overlap
+                     exceeds max_overlap_fraction.
 
     Raises:
         ValueError: sampling_mode is not in ALLOWED_BAG_SAMPLING_MODES, max_overlap_fraction is
@@ -261,6 +311,9 @@ def create_bags(
     # outside the parallelised, per-subject sampling loop.
     cluster_labels: Optional[np.ndarray] = None
     if n_clusters:
+        # Known limitation, documented but not fixed yet: this KMeans also sees the
+        # subjects that a later cross-validation holds out for testing.
+        warnings.warn(_CLUSTER_FIT_ON_ALL_SUBJECTS_WARNING, UserWarning, stacklevel=2)
         kmeans = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
         cluster_labels = kmeans.fit_predict(data_matrix)
         bag_feature_names = bag_feature_names + [
