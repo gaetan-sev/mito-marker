@@ -14,10 +14,20 @@ Public API:
     annotate_sfc_conditions(spectral_cytometry_anndata, condition_tokens)
         Add the products added to each tube and the waiting times (read from
         the FCS filename) to .obs, with products declared in the notebook.
+
+    annotate_sfc_filename_columns(spectral_cytometry_anndata, filename_columns)
+        Add to .obs the columns declared in the notebook, each value read from a
+        word of the FCS filename (e.g. 'S' → smurf_status = 'Smurf').
 """
 
 from mito_marker.sfc.clinical_data import enrich_with_clinical_data
 from mito_marker.sfc.conditions import annotate_sfc_conditions
+from mito_marker.sfc.filename_columns import annotate_sfc_filename_columns
 from mito_marker.sfc.ingestion import ingest_sfc_folder
 
-__all__ = ["ingest_sfc_folder", "enrich_with_clinical_data", "annotate_sfc_conditions"]
+__all__ = [
+    "ingest_sfc_folder",
+    "enrich_with_clinical_data",
+    "annotate_sfc_conditions",
+    "annotate_sfc_filename_columns",
+]

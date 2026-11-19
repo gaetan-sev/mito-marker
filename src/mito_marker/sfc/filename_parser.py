@@ -17,13 +17,14 @@ Example filename:
 
 The products added to the tube and the waiting times (the experimental
 condition, ADR-019) are read separately by parse_condition_from_filename(),
-because the product tokens are declared by the user in the notebook.
+because the product tokens are declared by the user in the notebook. So are the
+.obs columns declared in the notebook, read by parse_filename_columns() (ADR-021).
 """
 
 import math
 import os
 import re
-from typing import Optional
+from typing import Collection, Optional
 
 from mito_marker.controlled_vocabulary import (
     AGE_GROUP_TOKEN_TO_CANONICAL_SFC,
@@ -31,20 +32,38 @@ from mito_marker.controlled_vocabulary import (
     ALLOWED_DILUTION_SFC,
     ALLOWED_MARKERS_SFC,
     ALLOWED_SPECIES_SFC,
+    FCS_OBS_METADATA_FIELDS,
     FLOWAI_PASS_TOKENS,
     MARKER_TOKEN_TO_CANONICAL_SFC,
     NUMERICAL_OBS_BOUNDS,
     SFC_ADDITION_TIME_TOKEN_PATTERN,
     SFC_ADDITION_TIME_UNIT_TO_MINUTES,
     SFC_CONDITION_WITHOUT_ADDITION,
+    SFC_FILENAME_COLUMN_NAME_PATTERN,
+    SFC_FILENAME_COLUMNS_UNS_KEY,
     SFC_FILENAME_TOKENS_WITHOUT_METADATA,
     SFC_MARKER_JOIN_ORDER,
+    SFC_OBS_COLUMNS_EXTENDABLE_FROM_FILENAME,
+    SFC_OBS_COLUMNS_RESERVED_FROM_FILENAME_DECLARATION,
+    SFC_PRODUCT_PRESENCE_OBS_COLUMN_PREFIX,
     SFC_PRODUCT_TOKEN_PATTERN,
     TREATMENT_TOKEN_TO_CANONICAL_SFC,
 )
 
 # Token marking a sample that was not diluted (see _extract_dilution).
 _NOT_DILUTED_TOKEN = "ND"
+
+# Words the package already reads for the columns that accept declared words
+# (SFC_OBS_COLUMNS_EXTENDABLE_FROM_FILENAME), with the value each one gives.
+# They keep their meaning when a notebook declares new words for the column.
+_BUILT_IN_VALUE_BY_TOKEN_FOR_EXTENDABLE_COLUMN: dict[str, dict[str, str]] = {
+    "diet": {diet_token: diet_token for diet_token in ALLOWED_DIET_SFC},
+    "age_group": AGE_GROUP_TOKEN_TO_CANONICAL_SFC,
+    "treatment": TREATMENT_TOKEN_TO_CANONICAL_SFC,
+}
+assert set(_BUILT_IN_VALUE_BY_TOKEN_FOR_EXTENDABLE_COLUMN) == set(
+    SFC_OBS_COLUMNS_EXTENDABLE_FROM_FILENAME
+), "Internal error: every extendable column needs its built-in words here."
 
 
 def parse_fcs_filename(filename: str) -> dict[str, str | int | bool | None]:
@@ -323,6 +342,7 @@ def _detect_flowai_pass(tokens: list[str]) -> bool:
 def parse_condition_from_filename(
     filename: str,
     condition_tokens: dict[str, str],
+    filename_column_tokens: Optional[Collection[str]] = None,
 ) -> dict[str, str | int | float | list[str]]:
     """
     Read the products added to the tube, and the waiting times, from an FCS filename.
@@ -338,15 +358,20 @@ def parse_condition_from_filename(
     A token is a product only if it is a key of condition_tokens (declared in the
     notebook). A waiting time ('90s', '30min', '2h') is recognised by its form and
     converted to minutes. Tokens already read by parse_fcs_filename() (species,
-    subject number, age, diet, marker…) and the tokens of
-    SFC_FILENAME_TOKENS_WITHOUT_METADATA are skipped. Every other token is
-    returned in 'unrecognised_tokens', so that the caller can warn the user.
+    subject number, age, diet, marker…), the tokens of
+    SFC_FILENAME_TOKENS_WITHOUT_METADATA and the words of the .obs columns declared
+    in the notebook (filename_column_tokens, ADR-021) are skipped. Every other
+    token is returned in 'unrecognised_tokens', so that the caller can warn the user.
 
     Arguments:
         filename: The base filename string, with or without the .fcs extension.
         condition_tokens: Declared products, {token as written in filenames:
                           plain-English description}, e.g. {"PGM": "Pyruvate +
                           glutamate + malate", "ADP": "Adenosine diphosphate"}.
+        filename_column_tokens: Words of the declared .obs columns (see
+                                parse_filename_columns()), e.g. {"S", "NonS"}.
+                                They are recognised, so never reported as
+                                unrecognised. None means no declared column.
 
     Returns:
         A dict with the following keys:
@@ -375,10 +400,14 @@ def parse_condition_from_filename(
     products: list[str] = []
     minutes_after_last_addition = math.nan
     unrecognised_tokens: list[str] = []
+    declared_column_tokens = set(filename_column_tokens or ())
 
     for token in stem.split("_"):
         if token == "":
             continue  # double underscore in the filename
+
+        if token in declared_column_tokens:
+            continue  # read by parse_filename_columns(), not a product
 
         if token in condition_tokens:
             products.append(token)
@@ -503,3 +532,233 @@ def _validate_condition_tokens(condition_tokens: dict[str, str]) -> None:
                 f"Product token '{token}' in condition_tokens needs a description, e.g. "
                 f'"{token}": "<what this product is>".'
             )
+
+
+def parse_filename_columns(
+    filename: str,
+    filename_columns: dict[str, dict[str, str]],
+) -> dict[str, Optional[str]]:
+    """
+    Read the value of every .obs column declared in the notebook from an FCS filename.
+
+    Each declared column lists the filename words that give it a value (ADR-021):
+
+        filename_columns = {"smurf_status": {"S": "Smurf", "NonS": "Non_Smurf"}}
+
+        FLY_001_D30_S_DR     → {"smurf_status": "Smurf"}
+        FLY_002_D30_NonS_DR  → {"smurf_status": "Non_Smurf"}
+        FLY_003_D30_DR       → {"smurf_status": None}
+
+    A word matches only as a whole word between '_' (case-sensitive), so 'S' does
+    not match inside 'SSC'. For a column that the package already reads
+    (SFC_OBS_COLUMNS_EXTENDABLE_FROM_FILENAME: diet, age_group, treatment), the
+    built-in words keep their value and the declared words add new values.
+
+    Arguments:
+        filename: The base filename string, with or without the .fcs extension.
+        filename_columns: Declared columns, {column name: {word as written in
+                          filenames: value stored in .obs}}.
+
+    Returns:
+        {column name: value read from the filename, or None when the filename
+        holds no word of that column}, one entry per declared column.
+
+    Raises:
+        TypeError, ValueError: If filename_columns is not a valid declaration
+                               (see _validate_filename_columns).
+        ValueError: If the filename holds words giving two different values to
+                    one column (e.g. both 'S' and 'NonS').
+    """
+    _validate_filename_columns(filename_columns)
+    filename_words = _split_filename_into_words(filename)
+
+    value_by_column: dict[str, Optional[str]] = {}
+    for column_name in filename_columns:
+        value_by_token = _value_by_token_for_column(column_name, filename_columns[column_name])
+        matched_words = [word for word in filename_words if word in value_by_token]
+        matched_values = list(dict.fromkeys(value_by_token[word] for word in matched_words))
+
+        if len(matched_values) > 1:
+            raise ValueError(
+                f"'{os.path.basename(filename)}' gives two values to the .obs column "
+                f"'{column_name}': {matched_values}, from the words {matched_words}. "
+                "Each filename may hold the words of only one value per column: "
+                "correct the filename or the declaration."
+            )
+        value_by_column[column_name] = matched_values[0] if matched_values else None
+    return value_by_column
+
+
+def _filename_column_categories(
+    column_name: str,
+    value_by_token: dict[str, str],
+) -> list[str]:
+    """
+    Return the values a declared .obs column can take, in a fixed order.
+
+    The built-in values of an extendable column come first, in their built-in
+    order (e.g. 'AL', 'IF' for diet), then the declared values in alphabetical
+    order. Alphabetical rather than declaration order because .h5ad files store
+    the .uns dicts sorted by key: the order would otherwise change once the
+    dataset is saved and annotated again. Two words giving the same value
+    (aliases) give one category.
+
+    Arguments:
+        column_name: Name of the declared .obs column.
+        value_by_token: {word as written in filenames: value stored in .obs}.
+
+    Returns:
+        Unique values in order, used as the categories of the .obs column.
+    """
+    built_in_values = list(
+        dict.fromkeys(_BUILT_IN_VALUE_BY_TOKEN_FOR_EXTENDABLE_COLUMN.get(column_name, {}).values())
+    )
+    declared_values = sorted(set(value_by_token.values()) - set(built_in_values))
+    return built_in_values + declared_values
+
+
+def _value_by_token_for_column(
+    column_name: str,
+    value_by_token: dict[str, str],
+) -> dict[str, str]:
+    """
+    Return every word that gives a value to one column: built-in words first.
+
+    Arguments:
+        column_name: Name of the declared .obs column.
+        value_by_token: Declared words of that column, {word: value}.
+
+    Returns:
+        {word: value}, including the words the package already reads when the
+        column is one of SFC_OBS_COLUMNS_EXTENDABLE_FROM_FILENAME.
+    """
+    built_in_value_by_token = _BUILT_IN_VALUE_BY_TOKEN_FOR_EXTENDABLE_COLUMN.get(column_name, {})
+    return {**built_in_value_by_token, **value_by_token}
+
+
+def _split_filename_into_words(filename: str) -> list[str]:
+    """
+    Split an FCS filename into its words: basename, no .fcs extension, split on '_'.
+
+    Arguments:
+        filename: A filename or path, with or without the .fcs extension.
+
+    Returns:
+        The non-empty words, in filename order.
+    """
+    stem = os.path.basename(filename)
+    if stem.lower().endswith(".fcs"):
+        stem = stem[:-4]
+    return [word for word in stem.split("_") if word != ""]
+
+
+def _validate_filename_columns(
+    filename_columns: dict[str, dict[str, str]],
+    condition_tokens: Optional[dict[str, str]] = None,
+) -> None:
+    """
+    Check the .obs columns declared in the notebook before they are used.
+
+    A column name starts with a letter and holds letters, digits or '_'; it is
+    not a column the ingestion computes (SFC_OBS_COLUMNS_RESERVED_FROM_FILENAME_
+    DECLARATION, 'with_<product>', the fcs_* columns). Each column declares at
+    least one word. A word has the form of a product token, has no meaning in SFC
+    filenames yet (e.g. 'AL' is the diet), belongs to one column only, and is not
+    a declared product. Each value is a non-empty string.
+
+    Arguments:
+        filename_columns: {column name: {word as written in filenames: value
+                          stored in .obs}}.
+        condition_tokens: Declared products, {token: description}, checked so that
+                          a word is not both a product and a column value.
+
+    Returns:
+        None
+
+    Raises:
+        TypeError: If filename_columns, or the words of one column, is not a dict.
+        ValueError: If a column name, a word or a value is invalid; the message
+                    names it.
+    """
+    example = '{"smurf_status": {"S": "Smurf", "NonS": "Non_Smurf"}}'
+    if not isinstance(filename_columns, dict):
+        raise TypeError(
+            "filename_columns must be a dict {column name: {filename word: value}}, "
+            f"e.g. {example}; got {type(filename_columns).__name__}."
+        )
+
+    column_by_token: dict[str, str] = {}
+    for column_name, value_by_token in filename_columns.items():
+        if not isinstance(column_name, str) or not re.fullmatch(
+            SFC_FILENAME_COLUMN_NAME_PATTERN, column_name
+        ):
+            raise ValueError(
+                f"Invalid column name {column_name!r} in filename_columns: a column "
+                "name starts with a letter and holds only letters, digits or '_'."
+            )
+        if column_name in SFC_OBS_COLUMNS_RESERVED_FROM_FILENAME_DECLARATION:
+            raise ValueError(
+                f"The .obs column '{column_name}' cannot be declared in "
+                "filename_columns: the ingestion computes it "
+                f"({SFC_OBS_COLUMNS_RESERVED_FROM_FILENAME_DECLARATION[column_name]}). "
+                "Choose another column name."
+            )
+        if column_name.startswith(SFC_PRODUCT_PRESENCE_OBS_COLUMN_PREFIX):
+            raise ValueError(
+                f"The .obs column '{column_name}' cannot be declared in "
+                f"filename_columns: '{SFC_PRODUCT_PRESENCE_OBS_COLUMN_PREFIX}<product>' "
+                "columns are written from the products (condition_tokens). "
+                "Choose another column name."
+            )
+        if column_name in FCS_OBS_METADATA_FIELDS:
+            raise ValueError(
+                f"The .obs column '{column_name}' cannot be declared in "
+                "filename_columns: it is read from the .fcs file itself "
+                f"({FCS_OBS_METADATA_FIELDS[column_name]}). Choose another column name."
+            )
+        if not isinstance(value_by_token, dict):
+            raise TypeError(
+                f"The words of column '{column_name}' in filename_columns must be a "
+                f"dict {{filename word: value}}, e.g. {example}; "
+                f"got {type(value_by_token).__name__}."
+            )
+        if not value_by_token:
+            raise ValueError(
+                f"Column '{column_name}' in filename_columns declares no word: give at "
+                f"least one {{filename word: value}}, e.g. {example}."
+            )
+
+        for token, value in value_by_token.items():
+            if not isinstance(token, str) or not re.fullmatch(SFC_PRODUCT_TOKEN_PATTERN, token):
+                raise ValueError(
+                    f"Invalid word {token!r} for column '{column_name}' in "
+                    "filename_columns: a word starts with a letter and holds only "
+                    "letters, digits, '+' or '-' (no '_', which separates the words "
+                    "of a filename)."
+                )
+            if _is_metadata_token(token):
+                raise ValueError(
+                    f"Word '{token}' of column '{column_name}' in filename_columns "
+                    "already has a meaning in SFC filenames (species, subject number, "
+                    "age, diet, age group, treatment, dilution, marker, FlowAI or "
+                    "FlowJo tag). Choose another word."
+                )
+            if token in column_by_token and column_by_token[token] != column_name:
+                raise ValueError(
+                    f"Word '{token}' is declared in two columns of filename_columns: "
+                    f"'{column_by_token[token]}' and '{column_name}'. A word fills one "
+                    "column only. A declaration saved in the dataset counts too: it is "
+                    f"in .uns['{SFC_FILENAME_COLUMNS_UNS_KEY}']."
+                )
+            if condition_tokens and token in condition_tokens:
+                raise ValueError(
+                    f"Word '{token}' is declared both as a product (condition_tokens) "
+                    f"and as a value of column '{column_name}' (filename_columns). "
+                    "A word has one meaning only: keep one of the two declarations."
+                )
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"Word '{token}' of column '{column_name}' in filename_columns "
+                    f'needs a value, e.g. "{token}": "<value stored in .obs>".'
+                )
+            column_by_token[token] = column_name

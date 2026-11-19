@@ -6,7 +6,26 @@ Install a release with `pip install git+https://github.com/gaetan-sev/mito-marke
 
 ## [Unreleased]
 
+### Added
+- `ingest_sfc_folder(..., filename_columns=…)` and
+  `annotate_sfc_filename_columns()` (ADR-021): declare in the notebook an
+  `.obs` column and the value each filename word gives, e.g.
+  `filename_columns={"smurf_status": {"S": "Smurf", "NonS": "Non_Smurf"}}`.
+  A file without a word of the column gets NaN; a filename giving two values
+  to one column stops the ingestion before any `.fcs` file is read. The column
+  can be new, or `diet` / `age_group` / `treatment` to add words to the
+  built-in ones. The declaration is saved in `.uns["sfc_filename_columns"]`
+  and reused in append mode. `annotate_sfc_filename_columns()` works on a
+  `.h5ad` already ingested, without reading the `.fcs` files again.
+
 ### Changed
+- The `UnrecognisedFilenameTokenWarning` of the SFC ingestion now shows two
+  ways of declaring an unknown filename word: as a product (`condition_tokens`)
+  or as the value of an `.obs` column (`filename_columns`). Words of the
+  declared columns are no longer reported.
+- `parse_condition_from_filename()` takes an optional
+  `filename_column_tokens`: those words are skipped instead of reported as
+  unrecognised.
 - **Breaking** (changed default): the 10 TEM grey-level columns are analysed
   by default again (ADR-020, superseding the grey-level part of ADR-018).
   Only the 5 image-referenced features stay excluded: `Mito_CentroidX/Y`,

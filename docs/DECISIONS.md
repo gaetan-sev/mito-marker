@@ -1043,6 +1043,85 @@ ADR-018 stands.)
 
 ---
 
+## ADR-021 — SFC .obs columns declared in the notebook, read from filename words
+
+**Date**: 2026-11-19
+**Status**: accepted
+
+(Amends ADR-002 for the SFC columns declared in the notebook, as ADR-019 did
+for SFC products.)
+
+**Context**: A colleague's FLY filenames carry a word that the package does
+not know: `S` for Smurf flies and `NonS` for non-Smurf flies (Smurf = flies
+whose gut lets a blue dye leak out). The word was ignored with an
+`UnrecognisedFilenameTokenWarning`, and no `.obs` column recorded it. The only
+way to declare a word from the notebook was `condition_tokens` (ADR-019), which
+treats the word as a product added to the tube: `S` would count as one
+addition, and `S_PGM_ADP_30min` would mix the fly's phenotype with the
+products. Under ADR-002, a new sample description needs a new field in
+`controlled_vocabulary.py`, a package change and a release.
+
+**Decision**:
+- The notebook declares `.obs` columns and the value each filename word gives:
+  `ingest_sfc_folder(..., filename_columns={"smurf_status": {"S": "Smurf",
+  "NonS": "Non_Smurf"}})`. `annotate_sfc_filename_columns()` does the same on
+  an AnnData already ingested, from `.obs["source_filename"]`, without reading
+  the `.fcs` files again.
+- A word matches only as a whole word between `_`, and case matters. A file
+  without a word of the column gets NaN. Several words may give the same value
+  (aliases). A filename whose words give two values to one column raises a
+  `ValueError` that lists every such file; `ingest_sfc_folder()` checks every
+  filename before reading any `.fcs` file.
+- Checks (`_validate_filename_columns`): a column name starts with a letter and
+  holds letters, digits or `_`. A column computed by the ingestion cannot be
+  declared (`SFC_OBS_COLUMNS_RESERVED_FROM_FILENAME_DECLARATION`, the
+  `with_<product>` and `fcs_*` columns). A word has the form of a product token,
+  has no meaning in SFC filenames yet, fills one column only, and is not a
+  declared product. A value is a non-empty string.
+- `diet`, `age_group` and `treatment` accept declared words
+  (`SFC_OBS_COLUMNS_EXTENDABLE_FROM_FILENAME`): the built-in words keep their
+  value and the declared words add values (e.g. `{"diet": {"CR":
+  "Caloric_Restriction"}}`). Any other existing column is replaced.
+- Each declared column is categorical: built-in values first, then the
+  declared values in alphabetical order. Alphabetical, because `.h5ad` stores
+  the `.uns` dicts sorted by key, so the declaration order would change once
+  the file is saved and annotated again.
+- The declaration is saved in `.uns["sfc_filename_columns"]`, merged word by
+  word with a saved one, and read back in append mode (`anndata.concat()`
+  drops `.uns`).
+- `annotate_sfc_conditions()` reads the saved declaration: the declared words
+  are recognised and never reported. Its `UnrecognisedFilenameTokenWarning`
+  now shows both ways of declaring a word, as a product (`condition_tokens`) or
+  as the value of a column (`filename_columns`), with the unknown words already
+  written into both code examples. During ingestion the columns are written
+  first, then the conditions.
+
+**Alternatives considered**:
+- Declare `S` and `NonS` as products (`condition_tokens`): works today, but
+  counts a phenotype as an addition and mixes it into `condition`.
+- One field per new description in `controlled_vocabulary.py` (ADR-002
+  unchanged): a package change and a release each time.
+- A sample sheet joined on `subject_ID` with `enrich_with_clinical_data()`
+  (ADR-009): the cytometry standard, already available, and the right tool for
+  numeric values or many variables per subject; but one more file to keep
+  consistent with the tubes, and it cannot describe two tubes of one subject
+  differently.
+- Numeric values (e.g. a temperature): not covered; values are text. A sample
+  sheet or `map_obs_values()` handles them.
+
+**Consequences**:
+- A new sample description is one dict in the notebook; no release is needed.
+- Two notebooks may map one word differently; each `.h5ad` records the mapping
+  it was built with.
+- When `age_group` or `treatment` is extended, it becomes categorical and a
+  missing value is NaN instead of the empty string `""`.
+- A word that is a product in one dataset cannot be a column value in the same
+  dataset.
+- A typo in the declaration (a word found in no filename) is reported by the QC
+  block (`CHECK` line), not raised.
+
+---
+
 ## ADR-NNN — Template for future entries
 
 Copy and fill in for each new decision:

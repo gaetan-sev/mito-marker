@@ -671,6 +671,53 @@ SFC_PRODUCT_PRESENCE_OBS_COLUMN_PREFIX: str = "with_"
 SFC_CONDITION_TOKENS_UNS_KEY: str = "sfc_condition_tokens"
 
 # ---------------------------------------------------------------------------
+# SFC PIPELINE — .obs columns declared in the notebook, read from filename words (ADR-021)
+#
+# A colleague can add a sample description that the package does not know
+# (e.g. Smurf / non-Smurf flies) without a package change: the notebook names
+# the .obs column and the value each filename word gives,
+#     ingest_sfc_folder(..., filename_columns={"smurf_status": {"S": "Smurf",
+#                                                               "NonS": "Non_Smurf"}})
+# The columns and words themselves are NOT listed here. Only the fixed rules live
+# here: the form of a column name, the columns that cannot be declared, and the
+# columns that accept new words on top of the ones the package already reads.
+# ---------------------------------------------------------------------------
+
+# A declared column name starts with a letter and holds letters, digits or '_',
+# so that it can be used as group_by="<column>" and written to .h5ad unchanged.
+SFC_FILENAME_COLUMN_NAME_PATTERN: str = r"[A-Za-z][A-Za-z0-9_]*"
+
+# Columns that the ingestion computes and that the rest of the package relies on.
+# They cannot be declared: a declaration would silently replace their meaning.
+# The 'with_<product>' columns (SFC_PRODUCT_PRESENCE_OBS_COLUMN_PREFIX) and the
+# FCS_OBS_METADATA_FIELDS columns are reserved as well.
+SFC_OBS_COLUMNS_RESERVED_FROM_FILENAME_DECLARATION: dict[str, str] = {
+    "specie": "Species, read from the species word (ALLOWED_SPECIES_SFC)",
+    "subject_ID": "3-digit subject number",
+    "age": "Numeric age, read from D/M/Y + 2 digits",
+    "dilution": "Read from the ND word",
+    "marker": "Read from the marker words (MARKER_TOKEN_TO_CANONICAL_SFC)",
+    "FlowAI_Pass": "Read from the FlowAI words",
+    "source_filename": "Original filename, used to read every other column",
+    "condition": "Products added to the tube: declare them with condition_tokens",
+    "number_of_additions": "Computed from the products (condition_tokens)",
+    "minutes_after_last_addition": "Computed from the waiting times (condition_tokens)",
+}
+
+# Columns already read from filenames that accept new declared words. The words
+# the package already knows keep their meaning (e.g. 'AL' stays the diet
+# 'AL'); declared words add new values (e.g. {"diet": {"CR": "Caloric_Restriction"}}).
+SFC_OBS_COLUMNS_EXTENDABLE_FROM_FILENAME: dict[str, str] = {
+    "diet": "Diet, built-in words in ALLOWED_DIET_SFC",
+    "age_group": "Age group, built-in words in AGE_GROUP_TOKEN_TO_CANONICAL_SFC",
+    "treatment": "Treatment, built-in words in TREATMENT_TOKEN_TO_CANONICAL_SFC",
+}
+
+# .uns key where the declared columns are saved with the dataset, so that a
+# .h5ad file records which filename word gives which value.
+SFC_FILENAME_COLUMNS_UNS_KEY: str = "sfc_filename_columns"
+
+# ---------------------------------------------------------------------------
 # SFC PIPELINE — cytometry channel lists (Cytek Aurora 5-laser instrument)
 #
 # The Cytek Aurora exports two sets of per-detector channels:

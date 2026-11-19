@@ -81,6 +81,7 @@ mito-marker/
 │       │   ├── anndata_builder.py        # build_sfc_anndata()
 │       │   ├── clinical_data.py          # enrich_with_clinical_data()
 │       │   ├── conditions.py             # annotate_sfc_conditions() — products added to the tube (ADR-019)
+│       │   ├── filename_columns.py       # annotate_sfc_filename_columns() — .obs columns declared from filename words (ADR-021)
 │       │   └── qc.py                     # QC printing functions
 │       └── analysis/                     # Shared downstream analysis
 │           ├── preprocessing_config.py   # configure_preprocessing(), get_default_preprocessing_config()

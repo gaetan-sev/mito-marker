@@ -8,9 +8,10 @@ This module contains the single public function that end users call from a noteb
 
 It discovers all .fcs files in a directory, processes each one through the full
 pipeline (filename parsing → FCS loading → AnnData construction → QC), concatenates
-the per-file AnnData objects into a single combined dataset, adds the experimental
-condition of every event (products added to the tube, ADR-019), and saves the result
-as an .h5ad file. It also supports an append mode that extends an existing .h5ad
+the per-file AnnData objects into a single combined dataset, adds the .obs columns
+declared in the notebook from filename words (ADR-021) and the experimental condition
+of every event (products added to the tube, ADR-019), and saves the result as an
+.h5ad file. It also supports an append mode that extends an existing .h5ad
 file with new events, with strict channel-compatibility checking.
 """
 
@@ -28,7 +29,18 @@ from mito_marker.controlled_vocabulary import (
 from mito_marker.sfc.anndata_builder import build_sfc_anndata
 from mito_marker.sfc.conditions import annotate_sfc_conditions
 from mito_marker.sfc.fcs_loader import load_fcs_file
-from mito_marker.sfc.filename_parser import _validate_condition_tokens, parse_fcs_filename
+from mito_marker.sfc.filename_columns import (
+    _build_conflict_message,
+    _merge_filename_columns,
+    _read_saved_filename_columns,
+    annotate_sfc_filename_columns,
+)
+from mito_marker.sfc.filename_parser import (
+    _validate_condition_tokens,
+    _validate_filename_columns,
+    parse_fcs_filename,
+    parse_filename_columns,
+)
 from mito_marker.sfc.qc import (
     print_anndata_qc,
     print_append_summary,
@@ -44,6 +56,7 @@ def ingest_sfc_folder(
     channels_to_exclude: Optional[List[str]] = None,
     append_to_existing: bool = False,
     condition_tokens: Optional[dict[str, str]] = None,
+    filename_columns: Optional[dict[str, dict[str, str]]] = None,
 ) -> anndata.AnnData:
     """
     Ingest all .fcs files in a directory into a single AnnData object and save as .h5ad.
@@ -51,8 +64,10 @@ def ingest_sfc_folder(
     This is the primary public entry point for the SFC pipeline. For each .fcs file
     found in data_directory_path, it: parses the filename to extract .obs metadata,
     loads the event matrix with FlowIO, builds a per-file AnnData, then concatenates
-    all per-file objects into one combined dataset. Finally, annotate_sfc_conditions()
-    reads the products added to each tube from its filename (ADR-019).
+    all per-file objects into one combined dataset. Finally,
+    annotate_sfc_filename_columns() writes the .obs columns declared in the notebook
+    (ADR-021) and annotate_sfc_conditions() reads the products added to each tube
+    (ADR-019), both from the filename.
 
     If append_to_existing=True and the output file already exists, the existing .h5ad
     is loaded first and new events are appended after verifying that channel names
@@ -83,19 +98,32 @@ def ingest_sfc_folder(
                           None declares no product: every tube is 'No_addition'.
                           Unrecognised filename words trigger a warning that shows
                           how to declare them.
+        filename_columns: .obs columns read from filename words, declared in the
+                          notebook as {column name: {word as written in filenames:
+                          value stored in .obs}}, e.g.
+                          {"smurf_status": {"S": "Smurf", "NonS": "Non_Smurf"}}.
+                          A file without a word of the column gets NaN. The column
+                          can be new, or diet / age_group / treatment to add words
+                          to the built-in ones (see annotate_sfc_filename_columns).
+                          Every filename is checked before the .fcs files are
+                          read. None declares no column.
 
     Returns:
         The combined anndata.AnnData object (same data as saved to output_file_path).
 
     Raises:
         FileNotFoundError: If data_directory_path does not exist.
-        ValueError: If no .fcs files are found in data_directory_path, or if
-                    channel names mismatch when appending to an existing .h5ad.
+        ValueError: If no .fcs files are found in data_directory_path, if channel
+                    names mismatch when appending to an existing .h5ad, if a
+                    declared product or column is invalid, or if a filename gives
+                    two values to one declared column.
     """
-    # Check the declared products first: a mistake there should not cost a full read
-    # of every .fcs file before being reported.
+    # Check the declared products and columns first: a mistake there should not
+    # cost a full read of every .fcs file before being reported.
     if condition_tokens is not None:
         _validate_condition_tokens(condition_tokens)
+    if filename_columns is not None:
+        _validate_filename_columns(filename_columns, condition_tokens=condition_tokens)
 
     # SFC_CHANNELS_TO_EXCLUDE (FJComp-* channels and other non-informative columns) are always dropped.
     # Any caller-supplied list is applied on top.
@@ -112,6 +140,7 @@ def ingest_sfc_folder(
         print("Additional exclusions    : none")
     print(f"Append to existing       : {append_to_existing}")
     print(f"Declared products        : {sorted(condition_tokens) if condition_tokens else 'none'}")
+    print(f"Declared .obs columns    : {sorted(filename_columns) if filename_columns else 'none'}")
     print(f"Output file              : {output_file_path}")
 
     # STEP 1 — Discover FCS files
@@ -125,9 +154,10 @@ def ingest_sfc_folder(
     anndata_objects_to_combine: List[anndata.AnnData] = []
     existing_n_obs = 0
     already_ingested_filenames: set = set()
-    # anndata.concat() drops .uns, so the products saved in the existing file are
-    # read here and passed to annotate_sfc_conditions() after concatenation.
+    # anndata.concat() drops .uns, so the products and columns saved in the existing
+    # file are read here and passed to the annotation functions after concatenation.
     previously_declared_tokens: dict[str, str] = {}
+    previously_declared_columns: dict[str, dict[str, str]] = {}
 
     if append_to_existing and os.path.exists(output_file_path):
         print(f"\nAppend mode: loading existing .h5ad from {output_file_path}")
@@ -154,11 +184,28 @@ def ingest_sfc_folder(
         }
         if previously_declared_tokens:
             print(f"Products saved in the existing file: {sorted(previously_declared_tokens)}")
+        previously_declared_columns = _read_saved_filename_columns(existing_sfc_anndata)
+        if previously_declared_columns:
+            print(
+                ".obs columns saved in the existing file: "
+                f"{sorted(previously_declared_columns)}"
+            )
         anndata_objects_to_combine.append(existing_sfc_anndata)
     elif append_to_existing and not os.path.exists(output_file_path):
         print(
             "\nAppend mode requested but no existing file found at "
             f"{output_file_path}. Creating new file."
+        )
+
+    # STEP 2b — Check the declared columns on every filename before the long read:
+    # a filename giving two values to one column would otherwise fail only after
+    # every .fcs file has been read.
+    declared_products = {**previously_declared_tokens, **(condition_tokens or {})}
+    declared_columns = _merge_filename_columns(previously_declared_columns, filename_columns or {})
+    if declared_columns:
+        _validate_filename_columns(declared_columns, condition_tokens=declared_products)
+        _check_filename_columns_before_reading(
+            fcs_basenames + sorted(already_ingested_filenames), declared_columns
         )
 
     # STEP 3 — Process each FCS file
@@ -209,12 +256,16 @@ def ingest_sfc_folder(
         f"{combined_sfc_anndata.n_vars} channels"
     )
 
-    # STEP 4b — Experimental condition of every event, read from source_filename.
-    # Done on the combined object so that, in append mode, old events are annotated
-    # with the same products as new ones.
+    # STEP 4b — Declared .obs columns, then the experimental condition of every
+    # event, both read from source_filename. Done on the combined object so that,
+    # in append mode, old events are annotated like new ones. Columns first: their
+    # words are then recognised when the conditions are read.
+    if declared_columns:
+        combined_sfc_anndata = annotate_sfc_filename_columns(
+            combined_sfc_anndata, filename_columns=declared_columns
+        )
     combined_sfc_anndata = annotate_sfc_conditions(
-        combined_sfc_anndata,
-        condition_tokens={**previously_declared_tokens, **(condition_tokens or {})},
+        combined_sfc_anndata, condition_tokens=declared_products
     )
 
     # Log append summary if we added to existing data
@@ -249,6 +300,38 @@ def ingest_sfc_folder(
     )
 
     return combined_sfc_anndata
+
+
+def _check_filename_columns_before_reading(
+    filenames: List[str],
+    declared_columns: dict[str, dict[str, str]],
+) -> None:
+    """
+    Raise before any .fcs file is read if a filename gives two values to one column.
+
+    Arguments:
+        filenames: Basenames of the files to ingest, and of those already ingested
+                   in append mode (they are annotated again).
+        declared_columns: {column name: {filename word: value}}.
+
+    Returns:
+        None
+
+    Raises:
+        ValueError: Listing every filename that gives two values to one column.
+    """
+    conflict_messages: List[str] = []
+    for filename in filenames:
+        try:
+            parse_filename_columns(filename, declared_columns)
+        except ValueError as conflict_error:
+            conflict_messages.append(str(conflict_error))
+    if conflict_messages:
+        raise ValueError(_build_conflict_message(conflict_messages))
+    print(
+        f"Declared .obs columns checked on {len(filenames)} filename(s): "
+        "no filename gives two values to one column."
+    )
 
 
 def _ingest_single_fcs_file(

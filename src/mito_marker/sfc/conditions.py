@@ -14,7 +14,8 @@ filename lists every product present in the tube, in order of addition:
 The products are declared in the notebook (condition_tokens), not in
 controlled_vocabulary.py, so that a new product needs no change to the package.
 Any filename word that no rule recognises triggers a warning explaining how to
-declare it.
+declare it, either as a product or as the value of an .obs column
+(filename_columns, ADR-021).
 
 Public API:
     annotate_sfc_conditions(spectral_cytometry_anndata, condition_tokens)
@@ -35,11 +36,14 @@ import pandas as pd
 from mito_marker.controlled_vocabulary import (
     SFC_CONDITION_OBS_FIELDS,
     SFC_CONDITION_TOKENS_UNS_KEY,
+    SFC_OBS_COLUMNS_EXTENDABLE_FROM_FILENAME,
     SFC_PRODUCT_PRESENCE_OBS_COLUMN_PREFIX,
     SFC_PRODUCT_TOKEN_PATTERN,
 )
+from mito_marker.sfc.filename_columns import _read_saved_filename_columns
 from mito_marker.sfc.filename_parser import (
     _validate_condition_tokens,
+    _validate_filename_columns,
     parse_condition_from_filename,
 )
 
@@ -81,7 +85,11 @@ def annotate_sfc_conditions(
 
     Filename words that no rule recognises are reported in one
     UnrecognisedFilenameTokenWarning (a UserWarning, shown at every call) that
-    shows how to declare a product in the notebook. They are not stored anywhere.
+    shows how to declare them in the notebook, as a product (condition_tokens) or
+    as the value of an .obs column (filename_columns, ADR-021). They are not
+    stored anywhere. The words of the columns saved in
+    .uns["sfc_filename_columns"] (see annotate_sfc_filename_columns()) are
+    recognised and never reported.
 
     Arguments:
         spectral_cytometry_anndata: SFC AnnData with a 'source_filename' .obs column
@@ -96,8 +104,9 @@ def annotate_sfc_conditions(
         The same AnnData, modified in place and returned for chaining.
 
     Raises:
-        ValueError: If .obs has no 'source_filename' column, or if a declared
-                    product token or description is invalid.
+        ValueError: If .obs has no 'source_filename' column, if a declared
+                    product token or description is invalid, or if a product is
+                    also a word of a saved .obs column (filename_columns).
         TypeError: If condition_tokens is not a dict.
     """
     if "source_filename" not in spectral_cytometry_anndata.obs.columns:
@@ -120,6 +129,14 @@ def annotate_sfc_conditions(
     }
     declared_tokens = {**saved_tokens, **(condition_tokens or {})}
     _validate_condition_tokens(declared_tokens)
+    # The words of the declared .obs columns (ADR-021) are recognised, not products.
+    declared_filename_columns = _read_saved_filename_columns(spectral_cytometry_anndata)
+    _validate_filename_columns(declared_filename_columns, condition_tokens=declared_tokens)
+    filename_column_tokens = {
+        token
+        for value_by_token in declared_filename_columns.values()
+        for token in value_by_token
+    }
 
     print(f"Products saved with the dataset : {sorted(saved_tokens) if saved_tokens else 'none'}")
     print(
@@ -133,7 +150,9 @@ def annotate_sfc_conditions(
     # STEP 2 — Parse each source file once (events of one file share its condition)
     source_filenames = spectral_cytometry_anndata.obs["source_filename"].astype(str)
     parsed_by_filename = {
-        filename: parse_condition_from_filename(filename, declared_tokens)
+        filename: parse_condition_from_filename(
+            filename, declared_tokens, filename_column_tokens=filename_column_tokens
+        )
         for filename in source_filenames.unique()
     }
 
@@ -193,7 +212,9 @@ def annotate_sfc_conditions(
             files_by_unrecognised_token.setdefault(token, []).append(filename)
     if files_by_unrecognised_token:
         warnings.warn(
-            _build_unrecognised_token_message(files_by_unrecognised_token, declared_tokens),
+            _build_unrecognised_token_message(
+                files_by_unrecognised_token, declared_tokens, declared_filename_columns
+            ),
             UnrecognisedFilenameTokenWarning,
             stacklevel=2,
         )
@@ -303,28 +324,43 @@ def _print_condition_qc(
 def _build_unrecognised_token_message(
     files_by_unrecognised_token: dict[str, list[str]],
     declared_tokens: dict[str, str],
+    declared_filename_columns: Optional[dict[str, dict[str, str]]] = None,
 ) -> str:
     """
     Build the warning text for filename words that no rule recognises.
 
-    The text lists each word with one example file, suggests a declared product
+    The text lists each word with one example file, suggests a declared word
     when the word looks like a typing error, and shows the notebook code that
-    declares a new product.
+    declares a word in each of the two ways: as a product added to the tube
+    (condition_tokens, ADR-019), or as the value of an .obs column
+    (filename_columns, ADR-021). The unrecognised words are already written into
+    both code examples.
 
     Arguments:
         files_by_unrecognised_token: {unrecognised word: filenames containing it}.
         declared_tokens: The products currently declared.
+        declared_filename_columns: The .obs columns currently declared,
+                                   {column name: {filename word: value}}.
 
     Returns:
         The warning message.
     """
+    declared_filename_columns = declared_filename_columns or {}
+    declared_column_values = {
+        token: value
+        for value_by_token in declared_filename_columns.values()
+        for token, value in value_by_token.items()
+    }
+
     message_lines = [
         f"{len(files_by_unrecognised_token)} word(s) of the FCS filenames were not "
         "recognised. They were ignored: they appear in no .obs column.",
     ]
     for token, filenames in sorted(files_by_unrecognised_token.items()):
         message_lines.append(f"  - '{token}' in {len(filenames)} file(s), e.g. {filenames[0]}")
-        suggested_token = _suggest_declared_token(token, declared_tokens)
+        suggested_token = _suggest_declared_token(
+            token, {**declared_tokens, **declared_column_values}
+        )
         if suggested_token is not None:
             message_lines.append(
                 f"      Did you mean '{suggested_token}'? If so, correct the filename."
@@ -334,10 +370,16 @@ def _build_unrecognised_token_message(
         token for token in sorted(files_by_unrecognised_token)
         if re.fullmatch(SFC_PRODUCT_TOKEN_PATTERN, token)
     ]
+    # Shown in the column example even when no word has a declarable form.
+    column_example_tokens = declarable_tokens or ["<word>"]
+
     message_lines += [
         "",
-        "If a word is a product added to the tube, declare it in your notebook with a",
-        "short description, then run ingest_sfc_folder() again with condition_tokens:",
+        "Declare each word in your notebook, in one of two ways, then run",
+        "ingest_sfc_folder() again.",
+        "",
+        "1. The word is a product added to the tube (e.g. PGM, ADP): give it a short",
+        "   description in condition_tokens.",
         "",
         "    condition_tokens = {",
     ]
@@ -349,26 +391,53 @@ def _build_unrecognised_token_message(
         "    }",
         "    ingest_sfc_folder(..., condition_tokens=condition_tokens)",
         "",
-        "or update an AnnData already loaded, without reading the .fcs files again:",
+        "2. The word describes the sample (a group, a phenotype, a strain…): choose",
+        "   the .obs column it fills and the value it gives in that column, in",
+        "   filename_columns. The column can be new (any name: letters, digits, '_'),",
+        f"   or one of {', '.join(SFC_OBS_COLUMNS_EXTENDABLE_FROM_FILENAME)}. Several words can fill one column,",
+        "   e.g. \"smurf_status\": {\"S\": \"Smurf\", \"NonS\": \"Non_Smurf\"}.",
         "",
+        "    filename_columns = {",
+    ]
+    for column_name, value_by_token in declared_filename_columns.items():
+        message_lines.append(f'        "{column_name}": {{')
+        for token, value in value_by_token.items():
+            message_lines.append(f'            "{token}": "{value}",')
+        message_lines.append("        },")
+    message_lines.append('        "<column_name>": {')
+    for token in column_example_tokens:
+        message_lines.append(f'            "{token}": "<value stored in .obs>",')
+    message_lines += [
+        "        },",
+        "    }",
+        "    ingest_sfc_folder(..., filename_columns=filename_columns)",
+        "",
+        "Both can be given in the same call. To update an AnnData already loaded,",
+        "without reading the .fcs files again (columns first, so that their words",
+        "are recognised when the conditions are read):",
+        "",
+        "    from mito_marker import annotate_sfc_conditions, annotate_sfc_filename_columns",
+        "    annotate_sfc_filename_columns(spectral_cytometry_anndata, filename_columns=filename_columns)",
         "    annotate_sfc_conditions(spectral_cytometry_anndata, condition_tokens=condition_tokens)",
         "    spectral_cytometry_anndata.write_h5ad(output_file_path)",
         "",
         "A waiting time (e.g. 30min) must come right after the product it refers to.",
-        "If a word is not a product (e.g. a FlowJo gate name), you can ignore this warning.",
+        "If a word carries no information (e.g. a FlowJo gate name), you can ignore",
+        "this warning.",
     ]
     return "\n".join(message_lines)
 
 
 def _suggest_declared_token(token: str, declared_tokens: dict[str, str]) -> Optional[str]:
     """
-    Return the declared product closest to an unrecognised word, if any is close.
+    Return the declared word closest to an unrecognised word, if any is close.
 
     Case is ignored and letters may be swapped (e.g. 'pgm' or 'PMG' → 'PGM').
 
     Arguments:
         token: The unrecognised word.
-        declared_tokens: The products currently declared.
+        declared_tokens: The declared words, products and words of the declared
+                         .obs columns ({word: description or value}).
 
     Returns:
         The closest declared token, or None when none is similar enough.
