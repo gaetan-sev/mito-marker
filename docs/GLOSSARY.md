@@ -225,6 +225,15 @@ Products added to an SFC tube, declared in the notebook
 with the waiting time after its product (`PGM_ADP_30min`); `.obs["condition"]`
 holds that chain, `No_addition` when there is none. See ADR-019.
 
+### SFC filename columns
+
+`.obs` columns declared in the notebook, each value read from a word of the
+FCS filename
+(`ingest_sfc_folder(..., filename_columns={"smurf_status": {"S": "Smurf"}})`).
+For sample descriptions the package does not know (a group, a phenotype, a
+strain), as opposed to products added to the tube (SFC condition tokens). See
+ADR-021.
+
 ### Layer naming convention
 
 Format: `{transform}__{norm}` (double underscore). Examples:

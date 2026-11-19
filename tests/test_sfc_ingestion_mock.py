@@ -17,12 +17,18 @@ Tests verify:
 """
 
 import os
+import warnings
 
 import anndata
 import numpy as np
 import pytest
 
-from mito_marker.controlled_vocabulary import SFC_CHANNELS_TO_KEEP, SFC_CONDITION_TOKENS_UNS_KEY
+from mito_marker.controlled_vocabulary import (
+    SFC_CHANNELS_TO_KEEP,
+    SFC_CONDITION_TOKENS_UNS_KEY,
+    SFC_FILENAME_COLUMNS_UNS_KEY,
+)
+from mito_marker.sfc.conditions import UnrecognisedFilenameTokenWarning
 from mito_marker.sfc.ingestion import ingest_sfc_folder
 
 # ---------------------------------------------------------------------------
@@ -372,6 +378,132 @@ class TestConditionTokensMock:
                 data_directory_path=protocol_directory["fcs_dir"],
                 output_file_path=protocol_directory["output_path"],
                 condition_tokens={"AL": "Ad libitum"},
+            )
+
+
+class TestFilenameColumnsMock:
+    """
+    .obs columns declared with filename_columns (ADR-021) flow from the filenames
+    to .obs, are saved in the .h5ad, survive append mode, and are checked on every
+    filename before any .fcs file is read.
+    """
+
+    _FILENAME_COLUMNS = {"smurf_status": {"S": "Smurf", "NonS": "Non_Smurf"}}
+    _FILENAMES = [
+        "export_FLY_001_D02_S_DR_FlowAIGoodEvents_DR+.fcs",
+        "export_FLY_002_D02_NonS_DR_FlowAIGoodEvents_DR+.fcs",
+        "export_FLY_003_D30_S_PGM_DR_FlowAIGoodEvents_DR+.fcs",
+    ]
+
+    @pytest.fixture
+    def smurf_directory(self, tmp_path, monkeypatch):
+        fcs_dir = tmp_path / "fcs"
+        fcs_dir.mkdir()
+        for filename in self._FILENAMES:
+            (fcs_dir / filename).write_bytes(b"")
+        monkeypatch.setattr("mito_marker.sfc.ingestion.load_fcs_file", _mock_load_fcs_file)
+        return {"fcs_dir": str(fcs_dir), "output_path": str(tmp_path / "output.h5ad")}
+
+    def test_columns_in_obs_without_warning(self, smurf_directory):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UnrecognisedFilenameTokenWarning)
+            result = ingest_sfc_folder(
+                data_directory_path=smurf_directory["fcs_dir"],
+                output_file_path=smurf_directory["output_path"],
+                condition_tokens={"PGM": "Pyruvate + glutamate + malate"},
+                filename_columns=self._FILENAME_COLUMNS,
+            )
+        assert (result.obs["smurf_status"] == "Smurf").sum() == 2 * _MOCK_N_EVENTS
+        assert (result.obs["smurf_status"] == "Non_Smurf").sum() == _MOCK_N_EVENTS
+        assert (result.obs["condition"] == "PGM").sum() == _MOCK_N_EVENTS
+
+    def test_columns_saved_in_h5ad(self, smurf_directory):
+        ingest_sfc_folder(
+            data_directory_path=smurf_directory["fcs_dir"],
+            output_file_path=smurf_directory["output_path"],
+            filename_columns=self._FILENAME_COLUMNS,
+        )
+        reloaded = anndata.read_h5ad(smurf_directory["output_path"])
+        assert reloaded.uns[SFC_FILENAME_COLUMNS_UNS_KEY] == self._FILENAME_COLUMNS
+        assert list(reloaded.obs["smurf_status"].cat.categories) == ["Non_Smurf", "Smurf"]
+
+    def test_without_declaration_the_warning_explains_filename_columns(self, smurf_directory):
+        with pytest.warns(UserWarning, match="filename_columns"):
+            result = ingest_sfc_folder(
+                data_directory_path=smurf_directory["fcs_dir"],
+                output_file_path=smurf_directory["output_path"],
+            )
+        assert "smurf_status" not in result.obs.columns
+
+    def test_append_keeps_saved_columns(self, smurf_directory):
+        """Second run declares nothing: the columns saved in the file still apply."""
+        fcs_dir = smurf_directory["fcs_dir"]
+        output_path = smurf_directory["output_path"]
+        last_file = os.path.join(fcs_dir, self._FILENAMES[-1])
+        os.rename(last_file, last_file + ".hidden")
+        ingest_sfc_folder(
+            data_directory_path=fcs_dir,
+            output_file_path=output_path,
+            filename_columns=self._FILENAME_COLUMNS,
+        )
+        os.rename(last_file + ".hidden", last_file)
+
+        result = ingest_sfc_folder(
+            data_directory_path=fcs_dir,
+            output_file_path=output_path,
+            append_to_existing=True,
+        )
+        assert result.n_obs == 3 * _MOCK_N_EVENTS
+        assert result.uns[SFC_FILENAME_COLUMNS_UNS_KEY] == self._FILENAME_COLUMNS
+        assert (result.obs["smurf_status"] == "Smurf").sum() == 2 * _MOCK_N_EVENTS
+
+    def test_conflicting_filename_raises_before_reading_files(self, smurf_directory, monkeypatch):
+        def fail_if_called(*arguments, **keyword_arguments):
+            raise AssertionError("load_fcs_file must not be called")
+
+        open(os.path.join(smurf_directory["fcs_dir"], "FLY_004_D30_S_NonS_DR.fcs"), "wb").close()
+        monkeypatch.setattr("mito_marker.sfc.ingestion.load_fcs_file", fail_if_called)
+        with pytest.raises(ValueError, match="FLY_004_D30_S_NonS_DR.fcs"):
+            ingest_sfc_folder(
+                data_directory_path=smurf_directory["fcs_dir"],
+                output_file_path=smurf_directory["output_path"],
+                filename_columns=self._FILENAME_COLUMNS,
+            )
+
+    @pytest.mark.parametrize(
+        "bad_declaration, expected_message",
+        [
+            ({"condition": {"S": "Smurf"}}, "cannot be declared"),
+            ({"smurf_status": {"AL": "Smurf"}}, "already has a meaning"),
+        ],
+    )
+    def test_invalid_declaration_raises_before_reading_files(
+        self, smurf_directory, monkeypatch, bad_declaration, expected_message
+    ):
+        def fail_if_called(*arguments, **keyword_arguments):
+            raise AssertionError("load_fcs_file must not be called")
+
+        monkeypatch.setattr("mito_marker.sfc.ingestion.load_fcs_file", fail_if_called)
+        with pytest.raises(ValueError, match=expected_message):
+            ingest_sfc_folder(
+                data_directory_path=smurf_directory["fcs_dir"],
+                output_file_path=smurf_directory["output_path"],
+                filename_columns=bad_declaration,
+            )
+
+    def test_word_both_product_and_column_raises_before_reading_files(
+        self, smurf_directory, monkeypatch
+    ):
+        def fail_if_called(*arguments, **keyword_arguments):
+            raise AssertionError("load_fcs_file must not be called")
+
+        monkeypatch.setattr("mito_marker.sfc.ingestion.load_fcs_file", fail_if_called)
+        with pytest.raises(ValueError, match="both as a product"):
+            ingest_sfc_folder(
+                data_directory_path=smurf_directory["fcs_dir"],
+                output_file_path=smurf_directory["output_path"],
+                condition_tokens={"S": "Sucrose"},
+                filename_columns=self._FILENAME_COLUMNS,
             )
 
 

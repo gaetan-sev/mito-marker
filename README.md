@@ -85,13 +85,17 @@ from mito_marker import (
 )
 
 # Ingest a folder of .fcs files. condition_tokens declares the products added
-# to the tubes, as written in the filenames (optional, see section 6).
+# to the tubes, and filename_columns the .obs columns read from other filename
+# words, as written in the filenames (both optional, see section 6).
 spectral_cytometry_anndata = ingest_sfc_folder(
     data_directory_path="data/raw/sfc/",
     output_file_path="data/processed/sfc.h5ad",
     condition_tokens={
         "PGM": "Pyruvate + glutamate + malate (complex I substrates)",
         "ADP": "Adenosine diphosphate",
+    },
+    filename_columns={
+        "smurf_status": {"S": "Smurf", "NonS": "Non_Smurf"},
     },
 )
 
@@ -361,10 +365,11 @@ def ingest_sfc_folder(
     channels_to_exclude: Optional[List[str]] = None,
     append_to_existing: bool = False,
     condition_tokens: Optional[dict[str, str]] = None,
+    filename_columns: Optional[dict[str, dict[str, str]]] = None,
 ) -> anndata.AnnData
 ```
 
-Scans a folder of `.fcs` files, ingests each one, validates channel consistency across files, concatenates into a single AnnData, adds the experimental condition of every event (see `conditions.py` below), and saves to `.h5ad`.
+Scans a folder of `.fcs` files, ingests each one, validates channel consistency across files, concatenates into a single AnnData, adds the `.obs` columns declared from filename words (see `filename_columns.py` below) and the experimental condition of every event (see `conditions.py` below), and saves to `.h5ad`.
 
 ---
 
@@ -410,9 +415,55 @@ spectral_cytometry_anndata.write_h5ad(output_file)
 
 A token starts with a letter and holds letters, digits, `+` or `-`. It cannot reuse a word that already has a meaning in filenames (species, diet such as `AL`, marker such as `DR`…). The products are saved in `.uns["sfc_condition_tokens"]` and reused by later calls, so a new call only needs the new products.
 
-A filename word that no rule recognises (a typo such as `PMG`, or a product not declared yet) triggers an `UnrecognisedFilenameTokenWarning` that names the word, gives an example file, suggests a close declared product, and shows the code above. The word is ignored. To silence it, for example for a FlowJo gate name: `warnings.filterwarnings("ignore", category=UnrecognisedFilenameTokenWarning)` (imported from `mito_marker.sfc.conditions`).
+A filename word that no rule recognises (a typo such as `PMG`, a product not declared yet, or a sample description such as `S` for Smurf flies) triggers an `UnrecognisedFilenameTokenWarning` that names the word, gives an example file, suggests a close declared word, and shows the code that declares it, as a product (above) or as the value of an `.obs` column (`filename_columns.py` below). The word is ignored. To silence it, for example for a FlowJo gate name: `warnings.filterwarnings("ignore", category=UnrecognisedFilenameTokenWarning)` (imported from `mito_marker.sfc.conditions`).
 
 Comparing conditions: `group_by="condition"` (categories in protocol order: fewer additions first, then shorter waiting time), or filter on `with_ADP`. The steps of one sample are repeated measures: pair them by `specie` + `subject_ID`.
+
+---
+
+#### `filename_columns.py` — `annotate_sfc_filename_columns`
+
+```python
+def annotate_sfc_filename_columns(
+    spectral_cytometry_anndata: anndata.AnnData,
+    filename_columns: Optional[dict[str, dict[str, str]]] = None,
+) -> anndata.AnnData
+```
+
+Writes `.obs` columns declared in the notebook, each value read from a word of the filename (ADR-021). Use it for a description of the sample that the package does not know (a group, a phenotype, a strain); a product added to the tube goes in `condition_tokens` instead. `ingest_sfc_folder(..., filename_columns=…)` calls it; call it yourself on a `.h5ad` already ingested, without reading the `.fcs` files again.
+
+**Declaring a column** in the notebook: the column name, then each filename word with the value it gives in `.obs`:
+
+```python
+import anndata
+from mito_marker import annotate_sfc_conditions, annotate_sfc_filename_columns, ingest_sfc_folder
+
+filename_columns = {
+    "smurf_status": {"S": "Smurf", "NonS": "Non_Smurf"},
+}
+spectral_cytometry_anndata = ingest_sfc_folder(data_folder, output_file, filename_columns=filename_columns)
+
+# or, on a .h5ad already ingested (columns first, then the conditions, so that
+# the column words are no longer reported as unrecognised):
+spectral_cytometry_anndata = anndata.read_h5ad(output_file)
+annotate_sfc_filename_columns(spectral_cytometry_anndata, filename_columns=filename_columns)
+annotate_sfc_conditions(spectral_cytometry_anndata)
+spectral_cytometry_anndata.write_h5ad(output_file)
+```
+
+| Tube name | `smurf_status` |
+|---|---|
+| `FLY_001_D02_S_DR` | `Smurf` |
+| `FLY_002_D02_NonS_DR` | `Non_Smurf` |
+| `FLY_003_D02_DR` | NaN |
+| `FLY_004_D02_S_NonS_DR` | error: two values for one column |
+
+- A word matches only as a whole word between `_`, and case matters (`S` does not match `s`, nor the `S` inside `SSC`). Several words may give the same value: `{"S": "Smurf", "Smurf": "Smurf"}`.
+- The column name starts with a letter and holds letters, digits or `_`. It can be new, a column created earlier in the notebook (replaced), or `diet`, `age_group` or `treatment`: their built-in words keep their value and the declared words add values (`{"diet": {"CR": "Caloric_Restriction"}}`). The columns computed by the ingestion (`specie`, `subject_ID`, `age`, `marker`, `dilution`, `FlowAI_Pass`, `source_filename`, `condition`, `number_of_additions`, `minutes_after_last_addition`, `with_<product>`, `fcs_*`) cannot be declared.
+- A word cannot reuse a word that already has a meaning in filenames (species, diet such as `AL`, marker such as `DR`…), fill two columns, or be a declared product.
+- Each column is categorical: built-in values first, then the declared values in alphabetical order. Values are text; for numeric values, use `enrich_with_clinical_data()` or `map_obs_values()`.
+- `ingest_sfc_folder()` checks every filename before reading the `.fcs` files: a filename that gives two values to one column stops it, with the list of such files.
+- The declaration is saved in `.uns["sfc_filename_columns"]` and reused by later calls and in append mode, so a new call only needs the new words. The QC block lists, per column, the files and events of each value, the files left NaN, and the declared words found in no filename (usually a spelling or case mistake).
 
 ---
 
@@ -1016,7 +1067,7 @@ anndata_object.obs["insulin_level_uU_per_mL"] = series
 
 Never hardcode string values (like `"DeepRed"` or `"MNMS"`) outside of `controlled_vocabulary.py`.
 
-**One exception: SFC products** (ADR-019). The products added to SFC tubes are declared in the notebook with `condition_tokens`, not in `controlled_vocabulary.py`, so that a colleague testing a new product needs no package change. The rules that check them (token form, waiting-time pattern, words that already have a meaning) stay in `controlled_vocabulary.py`.
+**Two exceptions: SFC products and SFC filename columns** (ADR-019, ADR-021). The products added to SFC tubes are declared in the notebook with `condition_tokens`, and the `.obs` columns read from other filename words with `filename_columns`, not in `controlled_vocabulary.py`, so that a colleague testing a new product or describing samples in a new way needs no package change. The rules that check them (token and column-name form, waiting-time pattern, words that already have a meaning, reserved and extendable columns) stay in `controlled_vocabulary.py`.
 
 ---
 
