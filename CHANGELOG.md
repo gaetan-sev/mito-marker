@@ -7,6 +7,31 @@ Install a release with `pip install git+https://github.com/gaetan-sev/mito-marke
 ## [Unreleased]
 
 ### Added
+- SFC preprocessing before ingestion, one function per step, `.fcs` files in
+  and `.fcs` files out that FlowJo can reopen (ADR-022, ADR-023, ADR-024;
+  mito-marker-lab EXP-067):
+  - `run_flowai()` / `compute_flowai_quality()`: flowAI quality control ported
+    from the R code of the FlowJo plugin, with the plugin defaults; same label
+    as the plugin for every event in 464 of 468 tubes (no R needed). Each event
+    gets its own label, also when the Time channel goes back (the plugin + FlowJo
+    shift labels there; `match_flowjo_plugin_order=True` reproduces it). Writes
+    `<tube>_FlowAIGoodEvents.fcs` with a `FlowAI` channel, a summary table and
+    one QC figure per tube.
+  - `gate_p1()` / `compute_p1_mask()`: P1 as FSC-A > 1 and SSC-A > 1,
+    unsaturated (99.9 % of the events of the hand-drawn P1).
+  - `pair_stained_unstained()` and `gate_deep_red()`: DR+ = R2-A above the
+    99.9th percentile of the paired unstained (NM) tube, with two alerts asking
+    for a human look (NM bright tail, threshold sensitivity); several NM tubes
+    can be pooled with `;`.
+  - `read_flowjo_gates()` / `apply_flowjo_gates()`: apply the gates of a FlowJo
+    workspace in Python (exact for rectangles, within 0.09 % for polygons on
+    log axes, biexponential polygons approximated and flagged).
+  - `read_fcs_events()` / `write_fcs_events()` (`sfc/fcs_io.py`): every channel
+    and TEXT keyword kept when writing.
+  - `output_mode="all_events_flagged"` writes every event with a `FlowAI`,
+    `P1_Gate` or `DR_Gate` channel (2000 inside, 6000 outside); these channels
+    and the filename words `FlowAIFlagged`, `P1Flagged`, `DRFlagged` are
+    declared in `controlled_vocabulary.py`.
 - `ingest_sfc_folder(..., filename_columns=…)` and
   `annotate_sfc_filename_columns()` (ADR-021): declare in the notebook an
   `.obs` column and the value each filename word gives, e.g.

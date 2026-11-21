@@ -1122,6 +1122,147 @@ products. Under ADR-002, a new sample description needs a new field in
 
 ---
 
+## ADR-022 — SFC preprocessing in the package: flowAI ported to Python, one step per call, .fcs in and .fcs out
+
+**Date**: 2026-11-21
+**Status**: accepted
+
+**Context**: Before ingestion, every SFC tube goes through three steps done by
+hand in FlowJo: the flowAI plugin (quality control of the acquisition), a P1 gate
+on FSC-A / SSC-A, and a DR+ gate on a red channel. mito-marker-lab EXP-067
+studied them on 12 experiments (443 gated samples, 469 tubes with the plugin's
+per-event labels). The order in the workspaces is flowAI, then P1, then DR+.
+The plugin runs R code shipped with it (flowAI 1.x and mFilter's cffilter); R is
+not installed on the lab machines and not wanted as a dependency of the package.
+The colleague must be able to reopen every intermediate result in FlowJo.
+
+**Decision**:
+- flowAI is ported to Python (`sfc/flowai.py`) from the R code shipped with the
+  plugin, with the plugin defaults (0.1 s bins, alpha 0.01, Christiano–Fitzgerald
+  decomposition, binary segmentation with penalty 200 and at most 3
+  changepoints, both sides of the dynamic range, every detector, remove from
+  all). Validation (EXP-067): identical labels event by event in 12/12
+  development and 35/35 readable test files, and 464/468 readable files overall
+  (3 raw files rewritten after the plugin ran, 1 differing by one event). The
+  segment-length rule of the changepoint package was set from the data: each
+  side of a split keeps at least 3 bins. As flowCore does when reading the file,
+  every channel is cut at $PnR - 1 before the checks, the Time channel included
+  (some tubes hold Time values above their declared range).
+- Each event gets its own label. The plugin writes labels in time order and
+  FlowJo applies them in file order, which mislabels 1–28 % of the events of a
+  tube whose Time channel goes back (8 tubes in EXP-067).
+  `match_flowjo_plugin_order=True` reproduces the FlowJo exports.
+- One function per step, each reading a folder of .fcs files and writing a
+  folder of .fcs files: `run_flowai()`, `gate_p1()`, `pair_stained_unstained()`
+  + `gate_deep_red()`. A step can be run alone, on any folder (e.g. P1 on good
+  events FlowJo already produced). AnnData is built afterwards with
+  `ingest_sfc_folder()`, unchanged.
+- Written files keep every channel and every TEXT keyword of the source except
+  the structural ones (`sfc/fcs_io.py`), so FlowJo reopens them like its own
+  exports. Names follow FlowJo exports (`_FlowAIGoodEvents`, `_P1`, `_DR+`),
+  which the filename parser already knows. `output_mode="all_events_flagged"`
+  writes every event plus a label channel (`FlowAI`, `P1_Gate`, `DR_Gate`:
+  2000 inside, 6000 outside, the plugin's convention), declared non-analytical.
+- `read_flowjo_gates()` / `apply_flowjo_gates()` apply the gates of a FlowJo
+  workspace in Python: exact for rectangles, within 0.09 % for polygons on log
+  axes; polygons on a biexponential axis are approximated (asinh, within 0.33 %)
+  and flagged.
+
+**Alternatives considered**:
+- Call R's flowAI from Python: exact by construction, but R, Bioconductor and
+  rpy2/Rscript on every machine (Colab included) for one function; the port
+  reaches the same labels.
+- Steps on AnnData: flowAI needs the raw file with every channel in time order,
+  and AnnData files cannot be reopened in FlowJo.
+- One function chaining the three steps: the colleague wants to choose the steps.
+
+**Consequences**:
+- No R needed; the steps run on Colab and on the Mac (about 0.1–1 s per tube).
+- Tubes processed by the plugin and tubes processed by the package differ only
+  where the Time channel goes back (the package is right there).
+- FlowJo's display of a file written by the package has not yet been checked by
+  the colleague (a manual check, requested).
+- flowAI's flow rate check removes up to half of the events of very sparse tubes
+  (a few events per 0.1 s), as the plugin does; `second_fraction` widens the bins.
+
+---
+
+## ADR-023 — P1 as a fixed rule: FSC-A and SSC-A above 1, unsaturated
+
+**Date**: 2026-11-21
+**Status**: accepted
+
+**Context**: P1 is drawn by hand as a large polygon on log FSC-A / log SSC-A, one
+per FlowJo group (1 to 7 per experiment). EXP-067: outside P1 are almost only
+events whose FSC-A (93 %) or SSC-A (6 %) area is <= 1, i.e. zero or negative,
+which a log axis cannot show; applying another group's P1 to a tube changes its
+kept fraction by 0–0.4 point.
+
+**Decision**: `compute_p1_mask()` keeps the events with FSC-A > 1 and SSC-A > 1
+and below saturation ($PnR - 1). A $PnR below the channel's largest value (some
+FlowJo exports write $PnR = 1 for FSC-A / SSC-A) is not trusted: the most common
+plausible range of the file's other channels is used instead (4194304 on the
+Aurora) and a note is printed.
+
+**Alternatives considered**:
+- Template polygon or density contour on FSC/SSC: not needed, since the hand-drawn
+  P1 does not cut the cloud itself.
+- Replaying the hand-drawn P1 from the workspace: kept as `apply_flowjo_gates()`
+  for experiments already gated.
+
+**Consequences**: median Jaccard index 0.9993 with the hand-drawn P1 over 443
+samples, 95th percentile of the kept-fraction difference 0.79 point. P1 no
+longer depends on who draws it. It removes no "too large" or "too small"
+mitochondria: a size filter, if wanted, is a separate decision.
+
+---
+
+## ADR-024 — DR+ threshold from the paired unstained tube, with two alerts for a human look
+
+**Date**: 2026-11-21
+**Status**: accepted
+
+**Context**: DR+ is set by hand, per FlowJo group, "outside the brightness zone
+of the unstained (NM) reference". EXP-067: the manual threshold lets through a
+median 0.12 % of the paired NM events, but 0 to 12.6 % depending on the tube;
+applying another group's threshold changes DR+ % by 10.6 points (median). Where
+the NM and stained tubes overlap (Smurf: the NM holds a bright population), any
+threshold is a trade-off and a rule and a person can differ by 40 points. Gaëtan
+chose the rule and the two alerts (2026-11-21).
+
+**Decision**:
+- `gate_deep_red()`: DR+ = R2-A above the 99.9th percentile of R2-A in the
+  paired NM tube after P1. `pair_stained_unstained()` pairs a DR tube with the NM
+  tube of the same subject (filename words); the table can be edited, and
+  several NM tubes separated by ';' are pooled (for experiments whose NM tubes
+  are other animals).
+- Alert 1, NM bright tail: asinh(q99.9 / 250) − asinh(q99 / 250) of the NM tube
+  > 0.867. Alert 2, threshold sensitivity: more than 44.8 % of the stained events
+  between the NM's 99th and 99.99th percentiles. A tube with an alert is gated
+  and flagged (summary table, console, QC figure), not dropped.
+- Cutoffs calibrated in EXP-067 amendment 1 (pre-registered): 202 stained tubes
+  of 10 experiments; target |rule − hand| > 10 points; Youden's J on all tubes.
+
+**Alternatives considered**:
+- A quantile of the pooled NM tubes of the FlowJo group (EXP-067 DR-b): same
+  distance to the hand (4.8 vs 4.9 points), kept as the ';' option.
+- Median + k robust SD of the NM (EXP-067 DR-c, exploratory): further from the
+  hand (7.3 points), and wrong when the NM holds two populations.
+- A first alert based on the edge of the NM main cloud: failed on a two-population
+  NM (the edge fell beyond the threshold); replaced by shape-free measures.
+
+**Consequences**:
+- DR+ is reproducible and about 5 points from the hand in a typical tube; it
+  cannot reproduce the hand exactly, because the hand is not constant.
+- The alerts did not meet the pre-registered target (held-out sensitivity 0.64,
+  specificity 0.80, criterion 0.80 / 0.80; in-sample 0.74 / 0.87). They catch
+  tubes whose NM is abnormal (Smurf 28/29, D6-D7 3/3, Test 2 6/6) and miss tubes where the operator
+  set a different threshold on a clean NM (Mouse, Killi, D08-D12), which no
+  measure on the tubes can predict. An alert means "look at this tube", not
+  "this tube is wrong"; no alert does not mean the hand would agree.
+
+---
+
 ## ADR-NNN — Template for future entries
 
 Copy and fill in for each new decision:

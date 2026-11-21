@@ -3,7 +3,7 @@ title: Glossary
 status: draft
 owner: gaetan
 created: 2026-04-28
-updated: 2026-10-28
+updated: 2026-11-21
 tags: [glossary, terminology, acronyms]
 related: [docs/PROJECT.md, docs/DECISIONS.md]
 priority: P2
@@ -40,6 +40,37 @@ See: `src/mito_marker/sfc/`.
 Binary file format standardised by the International Society for Advancement of
 Cytometry (ISAC). Stores per-event detector readings, instrument metadata, and
 keyword-value pairs. Parsed by `flowio` in `sfc/fcs_loader.py`.
+
+---
+
+## SFC preprocessing (before ingestion)
+
+### flowAI
+
+Automatic quality control of a flow cytometry acquisition (Monaco et al.,
+Bioinformatics 2016), run by the lab through a FlowJo plugin. Three checks:
+flow rate (jumps in events per 0.1 s), signal acquisition (level changes of the
+channel medians over time) and dynamic range (saturated or extremely negative
+values). Ported to Python in `run_flowai()` (ADR-022).
+
+### P1 gate
+
+First FlowJo gate, drawn on log FSC-A / log SSC-A. In practice it removes events
+whose scatter area is zero or negative; `gate_p1()` applies it as FSC-A > 1 and
+SSC-A > 1, unsaturated (ADR-023).
+
+### DR+ gate and NM tube
+
+DR+: events of a MitoTracker Deep Red stained tube brighter in R2-A than the
+unstained reference. NM ("non marqué"): the unstained tube of the same sample.
+`gate_deep_red()` uses the 99.9th percentile of the NM tube, with two alerts for
+a human look (ADR-024).
+
+### FlowJo workspace (.wsp)
+
+XML file where FlowJo saves the gates drawn on each sample (polygon vertices,
+rectangle bounds), the axis scales and the population counts. Read by
+`read_flowjo_gates()` and applied by `apply_flowjo_gates()`.
 
 ---
 
