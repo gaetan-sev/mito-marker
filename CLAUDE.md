@@ -24,7 +24,7 @@ For non-trivial requests, read these files before responding:
 This project uses mitochondrial morphology as a biomarker. Two distinct input pipelines feed into a shared analytical stack:
 
 - **TEM pipeline**: Pre-extracted morphological feature files (tab-separated `.txt`, one row per mitochondrion) → AnnData. Image analysis is performed upstream by a separate tool (e.g. ImageJ/Fiji) and is outside the scope of this project. We only ingest its output.
-- **SFC pipeline**: Spectral flow cytometry per-mito measurements → FlowAI / FlowJo Gating → AnnData
+- **SFC pipeline**: Spectral flow cytometry per-mito measurements → flowAI → P1 → DR+ (FlowJo by hand, or `run_flowai()`, `gate_p1()`, `gate_deep_red()`) → AnnData
 
 Both pipelines converge into the same downstream analysis: data visualization, dimensionality reduction (PCA, UMAP), statistics, machine learning, and explainability (SHAP).
 
@@ -82,6 +82,10 @@ mito-marker/
 │       │   ├── clinical_data.py          # enrich_with_clinical_data()
 │       │   ├── conditions.py             # annotate_sfc_conditions() — products added to the tube (ADR-019)
 │       │   ├── filename_columns.py       # annotate_sfc_filename_columns() — .obs columns declared from filename words (ADR-021)
+│       │   ├── fcs_io.py                 # read_fcs_events(), write_fcs_events() — every channel, FlowJo-reopenable files
+│       │   ├── flowai.py                 # run_flowai(), compute_flowai_quality() — flowAI ported from the FlowJo plugin (ADR-022)
+│       │   ├── gating.py                 # gate_p1(), pair_stained_unstained(), gate_deep_red() (ADR-023, ADR-024)
+│       │   ├── flowjo_workspace.py       # read_flowjo_gates(), apply_flowjo_gates() — replay FlowJo gates
 │       │   └── qc.py                     # QC printing functions
 │       └── analysis/                     # Shared downstream analysis
 │           ├── preprocessing_config.py   # configure_preprocessing(), get_default_preprocessing_config()

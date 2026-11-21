@@ -620,6 +620,9 @@ SFC_FILENAME_TOKENS_WITHOUT_METADATA: dict[str, str] = {
     "P1": "FlowJo gate name — default name of the first gate",
     "bis": "Second acquisition of the same tube",
     "BIS": "Second acquisition of the same tube",
+    "FlowAIFlagged": "run_flowai() file holding every event and the FlowAI label channel (ADR-022)",
+    "P1Flagged": "gate_p1() file holding every event and the P1_Gate label channel (ADR-022)",
+    "DRFlagged": "gate_deep_red() file holding every event and the DR_Gate label channel (ADR-022)",
 }
 
 # ---------------------------------------------------------------------------
@@ -824,6 +827,10 @@ SFC_CHANNELS_TO_KEEP: list[str] = [
 SFC_NON_ANALYTICAL_CHANNELS: list[str] = [
     "Time",
     "FlowAI",
+    # Gate labels written by gate_p1() / gate_deep_red() in their 'all_events_flagged'
+    # files (2000 inside the gate, 6000 outside), for review in FlowJo (ADR-022).
+    "P1_Gate",
+    "DR_Gate",
 ]
 
 # Channels to EXCLUDE
@@ -863,6 +870,9 @@ SFC_CHANNELS_TO_EXCLUDE: list[str] = [
     # FlowAI is a quality score assigned by the FlowAI QC tool — not a cytometry
     # measurement. Its numerical value is meaningless as a biological feature.
     "FlowAI",
+    # Gate labels of the 'all_events_flagged' preprocessing files (ADR-022).
+    "P1_Gate",
+    "DR_Gate",
 ]
 
 # Spectral group definitions in canonical display order.
